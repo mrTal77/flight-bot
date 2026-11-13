@@ -174,3 +174,34 @@ console.log('kayak filter test passed');
   assert.equal(bot.parseCommand('hello'), null);
   console.log('chat edit tests passed');
 }
+
+// Google Flights: the search link carries the filters (checked live 13.11.2026), and result labels are parsed
+{
+  const W = require('./watch.js');
+  assert.equal(W.googleTfs([{ date: '2027-01-14', from: 'TLV', to: 'BKK', maxStops: 1 }], 2), 'GhwSCjIwMjctMDEtMTQoAWoFEgNUTFZyBRIDQktLQAFIAZgBAg==');
+  const g = W.parseGoogleLabel('From 1,496 US dollars. 1 stop flight with ITA. Leaves Ben Gurion Airport at 8:30 PM on Thursday, January 14 and arrives at Suvarnabhumi Airport at 8:10 AM on Friday, January 15. Total duration 18 hr 40 min.  Layover (1 of 1) is a 3 hr 50 min layover at Leonardo da Vinci International Airport in Rome. Select flight', '2027-01-14');
+  assert.equal(g.price, 1496); assert.equal(g.rt, false);
+  assert.deepEqual([g.leg.time, g.leg.stops, Math.round(g.leg.hours * 60), Math.round(g.leg.layover * 60), g.leg.airline], ['20:30 – 08:10+1', 1, 1120, 230, 'ITA']);
+  const n = W.parseGoogleLabel('From 812 US dollars round trip total. Nonstop flight with El Al. Leaves Ben Gurion Airport at 1:05 AM on Wednesday, December 30 and arrives at Miami International Airport at 7:50 AM on Wednesday, December 30. Total duration 14 hr 45 min.', '2026-12-30');
+  assert.deepEqual([n.price, n.rt, n.leg.stops, n.leg.airline, n.leg.time], [812, true, 0, 'אל על', '01:05 – 07:50']);
+  assert.equal(W.parseGoogleLabel('496 US dollars', '2027-01-14'), null);
+  const tasks = W.googleTasks(1); // test profile: round trip
+  assert.ok(tasks.length > 0 && tasks.length <= 10 && tasks.every((t) => t.kind === 'rt' && t.b > t.a && W.pairOk(t.a, t.b)));
+  console.log('google tests passed');
+}
+
+// Links to low-cost airline sites; retry once
+{
+  const W = require('./watch.js');
+  const leg = (date, airline) => ({ date, airline, stops: 0, time: '10:00 – 12:00' });
+  const ow = (l) => ({ kind: 'ow', offers: [{ legs: [l] }] });
+  assert.ok(W.lowCostLinks(ow(leg('2030-12-20', 'Wizz Air'))).includes('wizzair.com/en-gb/booking/select-flight/AAA/BBB/2030-12-20/null/1/0/0/null'));
+  const rt = W.lowCostLinks({ kind: 'rt', offers: [{ legs: [leg('2030-12-20', 'Ryanair'), leg('2031-01-12', 'Ryanair')] }] });
+  assert.ok(rt.includes('dateOut=2030-12-20&amp;') === false && rt.includes('dateOut=2030-12-20&dateIn=2031-01-12') && rt.includes('isReturn=true'));
+  assert.equal(W.lowCostLinks(ow(leg('2030-12-20', 'אל על'))), '');
+  assert.equal(W.lowCostLinks(ow(leg('2030-12-20', 'Wizz Air + Ryanair'))), ''); // a mix can't be booked on one airline's site
+  const mixed = W.lowCostLinks({ kind: 'mixed', offers: [{ legs: [leg('2030-12-20', 'easyJet')] }, { legs: [leg('2031-01-12', 'Wizz Air')] }] });
+  assert.ok(mixed.includes('easyjet.com') && mixed.includes('select-flight/BBB/AAA/2031-01-12/null'));
+  let calls = 0;
+  W.retryOnce(async () => { calls++; if (calls === 1) throw new Error('blocked'); return 'ok'; }, 1).then((r) => { assert.equal(r, 'ok'); assert.equal(calls, 2); console.log('low-cost link and retry tests passed'); });
+}

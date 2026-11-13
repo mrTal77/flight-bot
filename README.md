@@ -13,11 +13,17 @@ Everything runs on free GitHub services: GitHub Actions (searches and the bot) a
 - **Bot** (`bot.js`, every 5 minutes): reads new Telegram messages, checks the invite, validates the preferences,
   stores the user and starts a first search. Commands: `/status`, `/edit` (link to the user's own form, prefilled; saving it replaces their settings), `/price`, `/dest`, `/out`, `/back` (change one setting in the chat), `/lang`, `/stop` (deletes the user's data), `/help`. One user per Telegram chat: any update replaces that user's settings.
 - **Search** (`watch.js`, every 4 hours + a daily summary): one job per user, in parallel. Sources:
-  - Kayak in a headless browser, Israel (with Kayak's checked-bag filter) and Australia, "±3 days" grids:
-    one-way outbound, one-way returns, and round trips.
+  - Kayak in a headless browser, Israel (with Kayak's checked-bag filter) and Australia (prices in AUD, converted;
+    its bag filter has no effect, so bags show as unknown), "±3 days" grids: one-way outbound, one-way returns, and round trips.
   - Kiwi.com's public MCP server (`https://mcp.kiwi.com`, free): one-way, returns, round trips, and single tickets
     with the return on any airline (the outbound is pinned to the chosen airline's departure hours).
-  - For the bot owner only: Google Flights (daily), Duffel (optional `DUFFEL_TOKEN`), and algorithm B (see `CHALLENGER.md`).
+  - Google Flights, once a day with the summary, for every user: the search link carries the user's filters
+    (passengers, cabin, stops and airline per leg); up to `googleMaxSearches` dates or date pairs a day, spread over the range.
+  - For the bot owner only: Duffel (optional `DUFFEL_TOKEN`).
+  - A failed search is tried once more after a short pause.
+  - Skyscanner was tried (13.11.2026) and is not used: it blocks automated browsers at once.
+- When a trip is on a low-cost airline, the message adds a link to the airline's own site (Wizz Air and Ryanair with
+  the route and dates filled in; other low-cost airlines link to their home page).
 - Results are compared as one round-trip ticket vs. two separate tickets. An alert needs a price at or under the
   limit (per passenger). Prices where the bags are known to be missing are dropped; when it is unknown, the price is
   shown and marked with "*".
@@ -50,7 +56,7 @@ Everything runs on free GitHub services: GitHub Actions (searches and the bot) a
 | `invites` | SHA-256 hashes of valid invite codes |
 | `realertDropUsd`, `realertHours` | when to alert again |
 | `markets` | Kayak sites; `bagFilter` makes prices include a checked bag |
-| `kiwi`, `googleDaily`, `duffelEveryHours`, `challenger` | sources on/off |
+| `kiwi`, `googleDaily`, `googleMaxSearches`, `duffelEveryHours` | sources on/off, Google searches a day |
 
 ## Local test
 

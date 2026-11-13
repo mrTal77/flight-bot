@@ -16,6 +16,11 @@
       "linkHost": "il.kayak.com",
       "label": "Kayak ישראל",
       "bagFilter": true
+    },
+    {
+      "host": "www.kayak.com.au",
+      "currency": "AUD",
+      "label": "Kayak אוסטרליה"
     }
   ],
   "kiwi": true,
@@ -28,6 +33,6 @@
   ],
   "duffelEveryHours": 8,
   "concurrency": 6,
-  "challenger": true,
-  "pagesUrl": "https://mrtal77.github.io/flight-bot/"
+  "pagesUrl": "https://mrtal77.github.io/flight-bot/",
+  "googleMaxSearches": 10
 }
