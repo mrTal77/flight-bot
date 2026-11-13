@@ -545,7 +545,7 @@ function link(o, label) { return o.url ? `<a href="${o.url}">${label}</a>` : lab
 function cleanTime(t) { return (t || '').replace(/\s?[–-]\s?/, '–').replace(/\s+/g, ' ').trim(); }
 // One leg on one line: who · when · times · stops · flight time [· price]
 function legLine(icon, label, l, priceText) {
-  return `${icon} <b>${label}</b> ${l.airline || '?'} · ${heDate(l.date)} · ${[cleanTime(l.time), stopsText(l.stops), hoursText(l.hours)].filter(Boolean).join(' · ')}${priceText ? ' · ' + priceText : ''}`;
+  return `${icon} <b>${label}</b> ${[l.airline || '?', heDate(l.date), cleanTime(l.time), stopsText(l.stops), hoursText(l.hours), priceText].filter(Boolean).join(' · ')}`;
 }
 function bagsLine(offers) {
   if (!CONFIG.checkedBags && !CONFIG.carryOn) return '🧳 בלי כבודה';
