@@ -5,6 +5,7 @@
 // One user per Telegram chat: a new sign-up or edit from the same chat replaces that user's settings.
 // Usage:
 //   node bot.js                          process new Telegram messages
+//   node bot.js --owner-start CODE       owner only: sign the owner up with a form code (no Telegram message needed)
 //   node bot.js --start-searches         after the users file is pushed: start searches for new or changed users
 //   node bot.js --dry --updates file     test with saved updates; print replies instead of sending
 // Public run logs show only counts, never names, chat ids or trip details.
@@ -235,7 +236,8 @@ async function handle(db, msg, todayIso, toDispatch) {
     try { p = codec.decode(c.arg); } catch { await reply(chatId, tx(lang, 'badCode')); return; }
     const L = p.lang || lang;
     // A new user needs a valid invite. A user already signed up in this chat may always update their settings.
-    if (!existing && !CONFIG.invites.some((i) => i.sha256 === store.sha256(p.invite))) { await reply(chatId, tx(L, 'badInvite')); return; }
+    const isOwner = !!OWNER_CHAT && chatId === OWNER_CHAT; // the owner needs no invite
+    if (!existing && !isOwner && !CONFIG.invites.some((i) => i.sha256 === store.sha256(p.invite))) { await reply(chatId, tx(L, 'badInvite')); return; }
     const errs = codec.validate(p, todayIso, L);
     if (errs.length) { await reply(chatId, `${tx(L, 'problems')}\n• ${errs.map(esc).join('\n• ')}\n\n${tx(L, 'fillAgain')}`); return; }
     if (!existing && Object.keys(db.users).length >= CONFIG.maxUsers) { await reply(chatId, tx(L, 'full')); return; }
@@ -370,6 +372,17 @@ async function main() {
   console.log(`processed ${updates.length} messages; users: ${Object.keys(db.users).length}; searches to start: ${ids.length}`);
 }
 
+// Owner only (manual run with an owner code): register or update the owner as if they had pressed Start.
+async function ownerStart(code) {
+  if (!TOKEN || !OWNER_CHAT) throw new Error('TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required');
+  const db = store.loadUsers(); const toDispatch = [];
+  const msg = { chat: { id: OWNER_CHAT, type: 'private', first_name: '' }, text: `/start ${code}` };
+  await handle(db, msg, new Date().toISOString().slice(0, 10), toDispatch);
+  store.saveUsers(db);
+  fs.writeFileSync(PENDING, JSON.stringify([...new Set(toDispatch)]));
+  console.log(`owner sign-up: ${toDispatch.length ? 'saved' : 'not saved'}; users: ${Object.keys(db.users).length}`);
+}
+
 // Second step, after the users file was pushed: start the searches recorded by main().
 async function startPending() {
   let ids = []; try { ids = JSON.parse(fs.readFileSync(PENDING, 'utf8')); } catch {}
@@ -378,5 +391,5 @@ async function startPending() {
   console.log(`searches started: ${started} of ${ids.length}`);
 }
 
-if (require.main === module) (argv.includes('--start-searches') ? startPending() : main()).catch((e) => { console.error('ERROR', e.message); process.exit(1); });
+if (require.main === module) (argv.includes('--start-searches') ? startPending() : argv.includes('--owner-start') ? ownerStart(argv[argv.indexOf('--owner-start') + 1] || '') : main()).catch((e) => { console.error('ERROR', e.message); process.exit(1); });
 module.exports = { prefsText, parseDates, parseDate, findPlaces, parseCommand, handle };

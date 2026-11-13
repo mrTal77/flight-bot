@@ -6,6 +6,11 @@ on:
   schedule:
     - cron: "3-58/5 * * * *"   # every 5 minutes, off the busy :00 minute
   workflow_dispatch:
+    inputs:
+      owner_code:
+        description: "Owner only: a form code to sign the owner up (leave empty to process messages)"
+        required: false
+        default: ""
 
 permissions:
   contents: write   # to commit the encrypted users file
@@ -28,7 +33,9 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: node bot.js
+          OWNER_CODE: ${{ github.event.inputs.owner_code }}
+        run: |
+          if [ -n "$OWNER_CODE" ]; then node bot.js --owner-start "$OWNER_CODE"; else node bot.js; fi
       - name: Save users
         run: |
           git add data/users.enc 2>/dev/null || exit 0
