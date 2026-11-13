@@ -10,9 +10,9 @@
   var EPOCH = Date.UTC(2026, 0, 1); // day 0 of the date fields
   var AIRLINE_CHARS = ' ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; // index 0 = none
   var CABINS = ['economy', 'premium', 'business', 'first'];
-  var VERSION = 2;
+  var VERSION = 3; // v2 codes (range up to 31 days) are still accepted
   var LIMITS = {
-    maxRangeDays: 31, maxStops: 3, maxHours: 63, maxLayover: 31, maxTripDays: 127, maxPrice: 32767, minPrice: 20,
+    maxStops: 3, maxHours: 63, maxLayover: 31, maxTripDays: 127, maxPrice: 32767, minPrice: 20,
     maxAdults: 9, maxChildren: 8, maxInfants: 4, maxPassengers: 9, maxCheckedPerPax: 2,
   };
 
@@ -62,17 +62,15 @@
     if (!d.test(p.outFrom || '') || !d.test(p.outTo || '')) e.push('חסרים תאריכי הלוך');
     else {
       if (p.outTo < p.outFrom) e.push('תאריך הסיום של ההלוך לפני תאריך ההתחלה');
-      if (diff(p.outFrom, p.outTo) > LIMITS.maxRangeDays - 1) e.push('טווח תאריכי ההלוך יכול להיות עד ' + LIMITS.maxRangeDays + ' ימים (אחרת כל בדיקה תיקח יותר מדי זמן). אפשר לבחור תאריך גמיש במקום');
       if (todayIso && p.outFrom < todayIso) e.push('תאריך ההלוך כבר עבר');
-      if (dayNum(p.outFrom) < 0 || dayNum(p.outFrom) > 2047) e.push('תאריך הלוך מחוץ לטווח הנתמך');
+      if (dayNum(p.outFrom) < 0 || dayNum(p.outTo) > 4095) e.push('תאריך הלוך מחוץ לטווח הנתמך');
     }
     if (!p.oneWay) {
       if (!d.test(p.retFrom || '') || !d.test(p.retTo || '')) e.push('חסרים תאריכי חזור');
       else {
         if (p.retTo < p.retFrom) e.push('תאריך הסיום של החזור לפני תאריך ההתחלה');
-        if (diff(p.retFrom, p.retTo) > LIMITS.maxRangeDays - 1) e.push('טווח תאריכי החזור יכול להיות עד ' + LIMITS.maxRangeDays + ' ימים (אחרת כל בדיקה תיקח יותר מדי זמן). אפשר לבחור תאריך גמיש במקום');
         if (p.outFrom && p.retFrom < p.outFrom) e.push('החזור מתחיל לפני ההלוך');
-        if (dayNum(p.retFrom) < 0 || dayNum(p.retFrom) > 2047) e.push('תאריך חזור מחוץ לטווח הנתמך');
+        if (dayNum(p.retFrom) < 0 || dayNum(p.retTo) > 4095) e.push('תאריך חזור מחוץ לטווח הנתמך');
       }
       if (!inRange(p.maxTripDays, 0, LIMITS.maxTripDays)) e.push('אורך טיול מקסימלי: 0 עד ' + LIMITS.maxTripDays + ' ימים');
       // With a trip-length limit, at least one outbound/return pair must fit: latest outbound + limit >= earliest return.
@@ -122,11 +120,11 @@
     w.put(p.adults, 4); w.put(p.children, 4); w.put(p.infants, 3);
     w.put(CABINS.indexOf(p.cabin), 2); w.put(p.checkedBags, 2); w.put(p.carryOn, 1);
     putAirline(w, p.airline); w.put(p.outMaxStops, 2); w.put(p.outMaxHours, 6); w.put(p.outDepFrom, 5); w.put(p.outDepTo, 5);
-    w.put(dayNum(p.outFrom), 11); w.put(diff(p.outFrom, p.outTo), 5);
+    w.put(dayNum(p.outFrom), 12); w.put(diff(p.outFrom, p.outTo), 11);
     w.put(p.oneWay ? 1 : 0, 1);
     if (!p.oneWay) {
       putAirline(w, p.retAirline); w.put(p.retMaxStops, 2); w.put(p.retMaxHours, 6); w.put(p.retDepFrom, 5); w.put(p.retDepTo, 5);
-      w.put(dayNum(p.retFrom), 11); w.put(diff(p.retFrom, p.retTo), 5); w.put(p.maxTripDays, 7);
+      w.put(dayNum(p.retFrom), 12); w.put(diff(p.retFrom, p.retTo), 11); w.put(p.maxTripDays, 7);
     }
     w.put(p.maxLayover, 5); w.put(p.selfTransfer ? 1 : 0, 1);
     w.put(p.maxPrice, 15);
@@ -136,18 +134,19 @@
   function decode(s) {
     if (!/^[A-Za-z0-9_-]{20,64}$/.test(s || '')) throw new Error('bad code');
     var r = new Reader(s);
-    if (r.get(4) !== VERSION) throw new Error('unknown version');
+    var ver = r.get(4); if (ver !== VERSION && ver !== 2) throw new Error('unknown version');
+    var RB = ver === 2 ? 5 : 11; var DB = ver === 2 ? 11 : 12; // bits of a range length / of a date
     var inv = ''; for (var i = 0; i < 6; i++) inv += ALPHA[r.get(6)];
     var iata = function () { var c = ''; for (var k = 0; k < 3; k++) c += String.fromCharCode(65 + r.get(5)); return c; };
     var p = { invite: inv, origin: iata(), destination: iata() };
     p.adults = r.get(4); p.children = r.get(4); p.infants = r.get(3);
     p.cabin = CABINS[r.get(2)]; p.checkedBags = r.get(2); p.carryOn = r.get(1);
     p.airline = getAirline(r); p.outMaxStops = r.get(2); p.outMaxHours = r.get(6); p.outDepFrom = r.get(5); p.outDepTo = r.get(5);
-    var of = r.get(11); p.outFrom = isoOf(of); p.outTo = isoOf(of + r.get(5));
+    var of = r.get(DB); p.outFrom = isoOf(of); p.outTo = isoOf(of + r.get(RB));
     p.oneWay = r.get(1) === 1;
     if (!p.oneWay) {
       p.retAirline = getAirline(r); p.retMaxStops = r.get(2); p.retMaxHours = r.get(6); p.retDepFrom = r.get(5); p.retDepTo = r.get(5);
-      var rf = r.get(11); p.retFrom = isoOf(rf); p.retTo = isoOf(rf + r.get(5)); p.maxTripDays = r.get(7);
+      var rf = r.get(DB); p.retFrom = isoOf(rf); p.retTo = isoOf(rf + r.get(RB)); p.maxTripDays = r.get(7);
     }
     p.maxLayover = r.get(5); p.selfTransfer = r.get(1) === 1;
     p.maxPrice = r.get(15);

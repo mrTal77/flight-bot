@@ -266,17 +266,27 @@ async function kayakSearch(browser, market, task) {
   } finally { await ctx.close(); }
 }
 
-function kayakTasks() {
+// Pick n items spread evenly over the list, shifted by `turn` so later runs cover the others.
+function rotate(list, n, turn) {
+  if (list.length <= n) return list;
+  const out = []; const step = list.length / n;
+  for (let i = 0; i < n; i++) out.push(list[(Math.floor(i * step) + turn) % list.length]);
+  return [...new Set(out)];
+}
+function kayakTasks(turn) {
+  const max = CONFIG.kayakMaxTasks || 24;
   const outC = searchCenters(OUT.from, OUT.to);
-  if (!RET) return outC.map((a) => ({ kind: 'out', a }));
+  if (!RET) return rotate(outC, max, turn).map((a) => ({ kind: 'out', a }));
   const retC = searchCenters(RET.from, RET.to);
-  const tasks = [
-    ...outC.map((a) => ({ kind: 'out', a })),
-    ...retC.map((a) => ({ kind: 'ret', a })),
-  ];
   // Round trips: only center pairs where at least one date combination is allowed.
-  for (const a of outC) for (const b of retC) if (pairOk(addDays(a, 3), addDays(b, -3))) tasks.push({ kind: 'rt', a, b });
-  return tasks;
+  const pairs = [];
+  for (const a of outC) for (const b of retC) if (pairOk(addDays(a, 3), addDays(b, -3))) pairs.push({ kind: 'rt', a, b });
+  const oneWays = Math.max(2, Math.floor(max / 4));
+  return [
+    ...rotate(outC, oneWays, turn).map((a) => ({ kind: 'out', a })),
+    ...rotate(retC, oneWays, turn).map((a) => ({ kind: 'ret', a })),
+    ...rotate(pairs, max - 2 * oneWays, turn),
+  ];
 }
 
 // ---------- Kiwi.com public MCP server (free, no key): https://mcp.kiwi.com ----------
@@ -626,7 +636,9 @@ async function main() {
   const timed = (name, pr) => pr.then((r) => { console.log(`[${name}] ${r.results.length} results, ${r.errors.length} errors, ${Math.round((Date.now() - t0) / 1000)}s`); return r; });
 
   // Kayak: every market x every task, a few pages at a time.
-  const tasks = kayakTasks();
+  // Wide date ranges: each run checks a different slice of the Kayak windows (Kiwi always covers everything).
+  state.kayakTurn = (state.kayakTurn || 0) + 1;
+  const tasks = kayakTasks(state.kayakTurn);
   console.log(`kayak tasks per market: ${tasks.length}`);
   const kayakJob = (async () => {
     const jobs = CONFIG.markets.flatMap((m) => tasks.map((t) => ({ m, t })));
