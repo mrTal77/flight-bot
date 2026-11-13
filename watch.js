@@ -171,8 +171,8 @@ function writeLogs(outcome, offersCount, startedMs) {
   const n = (src, st) => SEARCH_LOG.filter((x) => x.source === src && (Array.isArray(st) ? st.includes(x.status) : x.status === st)).length;
   const per = (src) => [n(src, ['ok', 'ok-after-retry']), n(src, 'failed'), n(src, 'blocked'), n(src, 'skipped')];
   appendCsv(path.join(dir, 'runs.csv'), ['time_utc', 'run', 'user', 'mode', 'seconds', 'kayak_ok', 'kayak_failed', 'kayak_blocked', 'kayak_skipped',
-    'kiwi_ok', 'kiwi_failed', 'kiwi_blocked', 'kiwi_skipped', 'google_ok', 'google_failed', 'google_blocked', 'google_skipped', 'valid_offers', 'outcome'],
-  [[at, run, USER_ID, mode, Math.round((Date.now() - startedMs) / 1000), ...per('kayak'), ...per('kiwi'), ...per('google'), offersCount, scrub(outcome)]]);
+    'kiwi_ok', 'kiwi_failed', 'kiwi_blocked', 'kiwi_skipped', 'google_ok', 'google_failed', 'google_blocked', 'google_skipped', 'valid_offers', 'outcome', 'messages_failed'],
+  [[at, run, USER_ID, mode, Math.round((Date.now() - startedMs) / 1000), ...per('kayak'), ...per('kiwi'), ...per('google'), offersCount, scrub(outcome), n('telegram', 'failed')]]);
 }
 
 // Run async jobs with a concurrency limit (keeps memory use on the runner low).
@@ -579,19 +579,32 @@ async function searchDuffel(dates) {
 }
 
 // ---------- Telegram ----------
+// Sends a message to this user. Tried once more on failure; a message that still fails is logged
+// (logs/searches.csv, source "telegram") and the run goes on, so the search state is still saved.
 async function telegram(text) {
   if (DRY) { console.log('--- TELEGRAM (dry run) ---\n' + text + '\n---'); return; }
   const token = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
   const chatId = USER.chatId;
   if (!token || !chatId) throw new Error('bot token or chat id missing');
-  const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true }),
-  });
-  if (!res.ok) throw new Error(`Telegram send failed: HTTP ${res.status}`); // never log the token or URL
+  const send = async () => {
+    let res;
+    try {
+      res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true }),
+        signal: AbortSignal.timeout(30000),
+      });
+    } catch (e) { throw new Error(`Telegram network error: ${(e.cause && (e.cause.code || e.cause.message)) || e.message}`); } // never the URL (token)
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error(`Telegram HTTP ${res.status} ${String(j.description || '').slice(0, 100)}`);
+    }
+  };
+  try { await tracked('telegram', 'api.telegram.org', 'message', send, 5000, () => 1); } catch (e) {
+    console.log(`telegram send failed: ${scrub(e.message)} (${text.length} chars)`);
+  }
 }
-
 // ---------- formatting ----------
 function hoursText(h) { return h ? `${Math.floor(h)}:${String(Math.round((h % 1) * 60)).padStart(2, '0')} ש׳` : ''; }
 function stopsText(n) { return n === 0 ? 'ישיר' : n === 1 ? 'עצירה אחת' : n != null ? `${n} עצירות` : ''; }
@@ -882,8 +895,9 @@ async function main() {
 
 if (require.main === module) {
   main().catch((e) => {
-    console.error('ERROR', scrub(e.message));
-    try { writeLogs(`crash: ${e.message}`, 0, STARTED); } catch {}
+    const why = `${e.message}${e.cause ? ` (${e.cause.code || e.cause.message})` : ''}`;
+    console.error('ERROR', scrub(why));
+    try { writeLogs(`crash: ${why}`, 0, STARTED); } catch {}
     process.exit(1);
   });
 }
