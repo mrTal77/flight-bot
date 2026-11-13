@@ -1,5 +1,6 @@
 name: flight-watch
 
+# Started by cron-job.org (see CRON-SETUP.md) and, as a backup, by GitHub's own schedule.
 on:
   schedule:
     - cron: "17 2-22/4 * * *"   # every 4 hours (UTC)
@@ -15,6 +16,12 @@ on:
 
 permissions:
   contents: write   # to commit the encrypted search state
+
+# One full search at a time (cron-job.org and GitHub's own schedule may both start one); a newer waiting run
+# replaces an older waiting one. A single user's first search has its own group and is not held up.
+concurrency:
+  group: flight-watch-${{ github.event.inputs.user || 'all' }}
+  cancel-in-progress: false
 
 jobs:
   plan:

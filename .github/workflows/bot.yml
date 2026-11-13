@@ -1,7 +1,7 @@
 name: telegram-bot
 
-# Reads new Telegram messages (sign-ups from the landing page, /status, /stop) every few minutes.
-# GitHub may delay scheduled runs, so a reply can take 5-20 minutes.
+# Reads new Telegram messages (sign-ups from the landing page, commands) every 5 minutes.
+# Started by cron-job.org (see CRON-SETUP.md); GitHub's own schedule is a backup (it did not start in this repo).
 on:
   schedule:
     - cron: "3-58/5 * * * *"   # every 5 minutes, off the busy :00 minute
