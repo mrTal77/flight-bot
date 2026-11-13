@@ -23,3 +23,5 @@ time_utc,run,user,mode,source,market,kind,status,attempts,seconds,results,error
 2026-11-13T17:08:33Z,43469492241,u7c851ff58a,summary,kayak,www.kayak.com.au,rt,blocked,1,7,0,blocked: Kayak security check
 2026-11-13T21:05:15Z,43507380369,uab7fee9cec,summary,kayak,www.he.kayak.com,out,blocked,1,6,0,blocked: Kayak security check
 2026-11-13T21:05:15Z,43507380369,uab7fee9cec,summary,kayak,www.kayak.com.au,out,blocked,1,6,0,blocked: Kayak security check
+2026-11-13T23:32:17Z,43527767416,uab7fee9cec,check,kayak,www.he.kayak.com,out,blocked,1,6,0,blocked: Kayak security check
+2026-11-13T23:32:17Z,43527767416,uab7fee9cec,check,kayak,www.kayak.com.au,out,blocked,1,6,0,blocked: Kayak security check
