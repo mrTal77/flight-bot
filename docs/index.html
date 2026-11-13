@@ -65,6 +65,9 @@
   .done a.go { display: block; margin: 14px 0 8px; padding: 14px; border-radius: 12px; background: var(--accent); color: var(--accent-ink); text-decoration: none; font-weight: 700; }
   .done ol { text-align: right; color: var(--muted); padding-inline-start: 20px; }
   .blocked { display: none; }
+  .copy { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+  .copy code { flex: 1; min-width: 0; overflow-wrap: anywhere; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px; font-size: 13px; text-align: left; }
+  .copy button { width: auto; padding: 8px 12px; font-size: 14px; }
   .foot { color: var(--muted); font-size: 13px; margin-top: 16px; }
   [hidden] { display: none !important; }
   @media (max-width: 380px) { .row { grid-template-columns: 1fr; } }
@@ -205,7 +208,7 @@
 
     <div class="errors" id="errors" role="alert"></div>
     <button type="submit">אישרתי, להמשיך לטלגרם</button>
-    <p class="foot">הפרטים נשלחים רק לבוט בטלגרם ונשמרים אצלו מוצפנים. אפשר להפסיק בכל רגע עם הפקודה &#x2066;/stop&#x2069; בבוט.</p>
+    <p class="foot">הפרטים נשלחים רק לבוט בטלגרם ונשמרים אצלו מוצפנים. מי ששיתף איתכם את הבוט רואה את פרטי החיפוש שלכם (מסלול, תאריכים וסף מחיר). אפשר להפסיק בכל רגע עם הפקודה &#x2066;/stop&#x2069; בבוט.</p>
   </form>
 
   <section class="card done" id="done">
@@ -214,6 +217,8 @@
     <a class="go" id="tgLink" href="#" rel="noopener">פתיחת הבוט בטלגרם</a>
     <ol>
       <li>בטלגרם, לחצו על <b>Start / התחל</b> למטה.</li>
+      <li>לא מופיע כפתור Start? העתיקו את ההודעה הזו ושלחו אותה לבוט:
+        <div class="copy"><code id="startMsg" dir="ltr"></code><button type="button" id="copyBtn">העתקה</button></div></li>
       <li>תוך כמה דקות הבוט יאשר את ההרשמה ויציג את הפרטים.</li>
       <li>החיפוש הראשון ישלח תוצאות תוך כ-10–20 דקות.</li>
     </ol>
@@ -307,8 +312,15 @@
       box.style.display = 'block'; box.scrollIntoView({ behavior: 'smooth', block: 'center' }); return;
     }
     box.style.display = 'none';
-    $('tgLink').href = 'https://t.me/' + BOT + '?start=' + FlightCodec.encode(p);
+    var code = FlightCodec.encode(p);
+    $('tgLink').href = 'https://t.me/' + BOT + '?start=' + code;
+    $('startMsg').textContent = '/start ' + code;
     $('form').hidden = true; $('done').style.display = 'block'; window.scrollTo(0, 0);
+  });
+  $('copyBtn').addEventListener('click', function () {
+    var t = $('startMsg').textContent; var b = $('copyBtn');
+    var done = function () { b.textContent = 'הועתק ✓'; setTimeout(function () { b.textContent = 'העתקה'; }, 2000); };
+    if (navigator.clipboard) navigator.clipboard.writeText(t).then(done, function () {}); else { var r = document.createRange(); r.selectNode($('startMsg')); getSelection().removeAllRanges(); getSelection().addRange(r); done(); }
   });
   $('back').addEventListener('click', function (e) { e.preventDefault(); $('done').style.display = 'none'; $('form').hidden = false; });
 }());

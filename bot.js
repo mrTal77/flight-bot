@@ -69,11 +69,23 @@ function prefsText(p0) {
   return lines.join('\n');
 }
 
+const esc = (t) => String(t || '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+const routeOf = (p) => `${CITY[p.origin] || p.origin} ${p.oneWay ? '→' : '⇄'} ${CITY[p.destination] || p.destination}`;
+// One short line about a user's search, for the owner.
+function userLine(u) {
+  const p = codec.withDefaults(u.prefs);
+  const pax = p.adults + p.children + p.infants;
+  const dates = p.oneWay ? d(p.outFrom) : `${d(p.outFrom)} → ${d(p.retFrom)}`;
+  return `✈️ ${routeOf(p)} · ${dates}${pax > 1 ? ` · ${pax} נוסעים` : ''} · סף $${p.maxPrice.toLocaleString('en-US')}`;
+}
+async function notifyOwner(text) { if (OWNER_CHAT) { try { await reply(OWNER_CHAT, text); } catch (e) { console.log('owner notice failed'); } } }
+
 const HELP = [
   'הבוט מחפש עבורך טיסות כל כמה שעות, שולח התראה כשהמחיר יורד מתחת לסף שבחרת, וסיכום פעם ביום.',
   '',
   '/status · ההגדרות שלך והמחיר הכי טוב שנמצא',
   '/stop · הפסקת החיפוש ומחיקת הפרטים שלך',
+  '/users · (לבעלים בלבד) רשימת המשתמשים',
   'כדי לשנות הגדרות: למלא שוב את הטופס בדף ההרשמה וללחוץ אישור.',
 ].join('\n');
 
@@ -96,8 +108,10 @@ async function handle(db, msg, todayIso, toDispatch) {
   const text = (msg.text || '').trim();
   const existing = Object.values(db.users).find((u) => u.chatId === chatId);
 
-  if (text.startsWith('/start')) {
-    const payload = text.split(/\s+/)[1];
+  // The sign-up code arrives as "/start CODE" (Start button) or pasted as "/start CODE" / "CODE" by hand.
+  const pasted = /^[A-Za-z0-9_-]{20,64}$/.test(text) ? text : null;
+  if (text.startsWith('/start') || pasted) {
+    const payload = pasted || text.split(/\s+/)[1];
     if (!payload) {
       await reply(chatId, existing ? `👋 אתה כבר רשום.\n\n${prefsText(existing.prefs)}\n\n${HELP}` : '👋 כדי להירשם צריך לפתוח את קישור ההרשמה שקיבלת, למלא את פרטי הטיסה וללחוץ "אישרתי".');
       return;
@@ -117,6 +131,7 @@ async function handle(db, msg, todayIso, toDispatch) {
     db.users[user.id] = user;
     if (existing) store.deleteState(user.id); // new preferences: start fresh
     toDispatch.push(user.id);
+    if (!user.owner) await notifyOwner(`👤 <b>${existing ? 'משתמש עדכן הגדרות' : 'משתמש חדש נרשם'}</b>: ${esc(user.name) || 'ללא שם'}\n${userLine(user)}\nסה״כ משתמשים: ${Object.keys(db.users).length}`);
     await reply(chatId, `✅ <b>${existing ? 'ההגדרות עודכנו' : 'נרשמת בהצלחה'}!</b>\n\n${prefsText(prefs)}\n\nהחיפוש הראשון מתחיל עכשיו, והתוצאות יגיעו לכאן בעוד כ-10 דקות. אחר כך אבדוק כל כמה שעות ואשלח סיכום פעם ביום.\n\n${HELP}`);
     return;
   }
@@ -124,7 +139,20 @@ async function handle(db, msg, todayIso, toDispatch) {
     if (!existing) { await reply(chatId, 'אינך רשום כרגע.'); return; }
     delete db.users[existing.id];
     store.deleteState(existing.id);
+    if (!existing.owner) await notifyOwner(`👋 משתמש הפסיק: ${esc(existing.name) || 'ללא שם'} (${routeOf(existing.prefs)}). נשארו ${Object.keys(db.users).length} משתמשים.`);
     await reply(chatId, '🛑 החיפוש הופסק והפרטים שלך נמחקו. אפשר להירשם שוב בכל זמן דרך קישור ההרשמה.');
+    return;
+  }
+  if (text === '/users' && OWNER_CHAT && chatId === OWNER_CHAT) {
+    const list = Object.values(db.users).sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+    if (!list.length) { await reply(chatId, 'אין משתמשים רשומים כרגע.'); return; }
+    const rows = list.map((u, i) => {
+      let st = {}; try { st = store.loadState(u.id); } catch {}
+      const best = st.lastRun && st.lastRun.bestUsd ? `$${st.lastRun.bestUsd.toLocaleString('en-US')}` : 'עוד אין';
+      const last = st.lastRun ? d(st.lastRun.at.slice(0, 10)) : '—';
+      return `${i + 1}. <b>${esc(u.name) || 'ללא שם'}</b>${u.owner ? ' (אתה)' : ''} · נרשם ${d(u.createdAt.slice(0, 10))}\n${userLine(u)}\n💰 הזול ביותר: ${best} · בדיקה אחרונה: ${last}`;
+    });
+    await reply(chatId, `👥 <b>${list.length} משתמשים</b> (מקסימום ${CONFIG.maxUsers})\n\n${rows.join('\n\n')}`);
     return;
   }
   if (text === '/status') {
