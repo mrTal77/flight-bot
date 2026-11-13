@@ -126,14 +126,12 @@
         <div class="field"><label for="outTo">עד תאריך</label><input type="date" id="outTo"></div>
       </div>
       <p class="hint">עד 21 ימים בין התאריכים.</p>
-      <div class="row">
-        <div class="field"><label for="airline">חברת תעופה</label><select id="airline" class="airline-select"></select></div>
-        <div class="field"><label for="outMaxStops">עצירות</label><select id="outMaxStops" class="stops-select" data-default="0"></select></div>
-      </div>
-      <div class="field" hidden><label for="airlineOther">קוד החברה (2 תווים)</label><input id="airlineOther" class="code" maxlength="2" placeholder="למשל BA"></div>
+      <div class="field"><label for="outMaxStops">עצירות</label><select id="outMaxStops" class="stops-select" data-default="0"></select></div>
       <details>
-        <summary>עוד אפשרויות להלוך</summary>
+        <summary>מסננים מתקדמים להלוך</summary>
         <div>
+          <div class="field"><label for="airline">חברת תעופה</label><select id="airline" class="airline-select"></select></div>
+          <div class="field" hidden><label for="airlineOther">קוד החברה (2 תווים)</label><input id="airlineOther" class="code" maxlength="2" placeholder="למשל BA"></div>
           <div class="field"><label for="outMaxHours">משך הטיסה, עד (שעות)</label><input type="number" id="outMaxHours" min="0" max="63" value="0" inputmode="numeric"></div>
           <p class="hint">0 = בלי הגבלה.</p>
           <div class="row">
@@ -150,19 +148,17 @@
         <div class="field"><label for="retFrom">מתאריך</label><input type="date" id="retFrom"></div>
         <div class="field"><label for="retTo">עד תאריך</label><input type="date" id="retTo"></div>
       </div>
-      <div class="row">
-        <div class="field"><label for="retAirline">חברת תעופה</label><select id="retAirline" class="airline-select"></select></div>
-        <div class="field"><label for="retMaxStops">עצירות</label><select id="retMaxStops" class="stops-select" data-default="1"></select></div>
-      </div>
-      <div class="field" hidden><label for="retAirlineOther">קוד החברה (2 תווים)</label><input id="retAirlineOther" class="code" maxlength="2" placeholder="למשל BA"></div>
+      <div class="field"><label for="retMaxStops">עצירות</label><select id="retMaxStops" class="stops-select" data-default="1"></select></div>
       <div class="row">
         <div class="field"><label for="retMaxHours">משך החזור, עד (שעות)</label><input type="number" id="retMaxHours" min="0" max="63" value="25" inputmode="numeric"></div>
         <div class="field"><label for="maxTripDays">אורך הטיול, עד (ימים)</label><input type="number" id="maxTripDays" min="0" max="127" value="0" inputmode="numeric"></div>
       </div>
       <p class="hint">0 = בלי הגבלה.</p>
       <details>
-        <summary>עוד אפשרויות לחזור</summary>
+        <summary>מסננים מתקדמים לחזור</summary>
         <div>
+          <div class="field"><label for="retAirline">חברת תעופה</label><select id="retAirline" class="airline-select"></select></div>
+          <div class="field" hidden><label for="retAirlineOther">קוד החברה (2 תווים)</label><input id="retAirlineOther" class="code" maxlength="2" placeholder="למשל BA"></div>
           <div class="row">
             <div class="field"><label for="retDepFrom">המראה משעה</label><select id="retDepFrom" class="hour-from"></select></div>
             <div class="field"><label for="retDepTo">עד שעה</label><select id="retDepTo" class="hour-to"></select></div>
@@ -179,7 +175,7 @@
       </div>
       <p class="hint" id="ilsHint"></p>
       <details>
-        <summary>עצירות ביניים וכרטיסים נפרדים</summary>
+        <summary>מסננים מתקדמים: עצירות ביניים וכרטיסים נפרדים</summary>
         <div>
           <div class="field"><label for="maxLayover">עצירת ביניים ארוכה ביותר (שעות)</label><input type="number" id="maxLayover" min="0" max="31" value="0" inputmode="numeric"></div>
           <p class="hint">0 = בלי הגבלה.</p>
