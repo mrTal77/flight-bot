@@ -131,3 +131,13 @@ console.log('kayak filter test passed');
   assert.ok(!known.includes('*</b>') && known.includes('כלולים'), 'known bags not marked');
   console.log('message tests passed');
 }
+
+// Trip length must leave at least one allowed outbound/return pair
+{
+  const C = require('./docs/codec.js');
+  const base = { invite: 'Ab3_x9', origin: 'AAA', destination: 'BBB', outFrom: '2030-11-14', outTo: '2030-11-20', oneWay: false, retFrom: '2030-12-11', retTo: '2030-12-17', maxPrice: 900 };
+  assert.ok(C.validate({ ...base, maxTripDays: 15 }, '2030-11-01').some((e) => e.includes('אורך הטיול')), 'too short');
+  assert.deepEqual(C.validate({ ...base, maxTripDays: 21 }, '2030-11-01'), []);
+  assert.deepEqual(C.validate({ ...base, maxTripDays: 0 }, '2030-11-01'), []);
+  console.log('trip length tests passed');
+}

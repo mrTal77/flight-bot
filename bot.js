@@ -17,7 +17,7 @@ const updatesFile = argv.includes('--updates') ? argv[argv.indexOf('--updates') 
 const TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
 const OWNER_CHAT = (process.env.TELEGRAM_CHAT_ID || '').trim(); // the bot owner's chat (gets the extra searches)
 
-const CITY = codec.CITY;
+codec.setPlaces(JSON.parse(fs.readFileSync(path.join(__dirname, 'docs', 'airports.json'), 'utf8')));
 const d = (iso) => `${Number(iso.slice(8))}.${Number(iso.slice(5, 7))}.${iso.slice(0, 4)}`;
 
 async function tg(method, body) {
@@ -36,7 +36,7 @@ async function reply(chatId, text) {
 function prefsText(p) { return codec.describe(p).join('\n'); }
 
 const esc = (t) => String(t || '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
-const routeOf = (p) => `${CITY[p.origin] || p.origin} ${p.oneWay ? '→' : '⇄'} ${CITY[p.destination] || p.destination}`;
+const routeOf = (p) => `${codec.placeName(p.origin)} ${p.oneWay ? '→' : '⇄'} ${codec.placeName(p.destination)}`;
 // One short line about a user's search, for the owner.
 function userLine(u) {
   const p = codec.withDefaults(u.prefs);

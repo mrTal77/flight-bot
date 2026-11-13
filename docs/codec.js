@@ -39,8 +39,8 @@
   function validate(p0, todayIso) {
     var p = withDefaults(p0); var e = [];
     var iata = /^[A-Z]{3}$/; var al = /^[A-Z0-9]{2}$/; var d = /^\d{4}-\d{2}-\d{2}$/;
-    if (!iata.test(p.origin || '')) e.push('קוד שדה מוצא לא תקין (3 אותיות, למשל TLV)');
-    if (!iata.test(p.destination || '')) e.push('קוד שדה יעד לא תקין (3 אותיות, למשל LHR)');
+    if (!iata.test(p.origin || '')) e.push('צריך לבחור מוצא מהרשימה');
+    if (!iata.test(p.destination || '')) e.push('צריך לבחור יעד מהרשימה');
     if (p.origin && p.origin === p.destination) e.push('המוצא והיעד זהים');
     if (p.airline && !al.test(p.airline)) e.push('קוד חברת התעופה בהלוך לא תקין (2 תווים, למשל LY)');
     if (p.retAirline && !al.test(p.retAirline)) e.push('קוד חברת התעופה בחזור לא תקין (2 תווים)');
@@ -75,6 +75,10 @@
         if (dayNum(p.retFrom) < 0 || dayNum(p.retFrom) > 2047) e.push('תאריך חזור מחוץ לטווח הנתמך');
       }
       if (!inRange(p.maxTripDays, 0, LIMITS.maxTripDays)) e.push('אורך טיול מקסימלי: 0 עד ' + LIMITS.maxTripDays + ' ימים');
+      // With a trip-length limit, at least one outbound/return pair must fit: latest outbound + limit >= earliest return.
+      else if (p.maxTripDays && d.test(p.outTo || '') && d.test(p.retFrom || '') && diff(p.outTo, p.retFrom) > p.maxTripDays) {
+        e.push('אורך הטיול המקסימלי (' + p.maxTripDays + ' ימים) קצר מדי לתאריכים שבחרת: בין ההלוך האחרון לחזור הראשון יש ' + diff(p.outTo, p.retFrom) + ' ימים. אפשר להגדיל את אורך הטיול או לשים 0');
+      }
     }
     if (!inRange(p.maxPrice, LIMITS.minPrice, LIMITS.maxPrice)) e.push('מחיר מקסימלי לנוסע: ' + LIMITS.minPrice + ' עד ' + LIMITS.maxPrice + ' דולר');
     if (!/^[A-Za-z0-9_-]{6}$/.test(p.invite || '')) e.push('קוד ההזמנה חסר או לא תקין');
@@ -155,6 +159,10 @@
     FCO: 'רומא', ATH: 'אתונה', BCN: 'ברצלונה', MAD: 'מדריד', BER: 'ברלין', AMS: 'אמסטרדם', PRG: 'פראג', BUD: 'בודפשט',
     VIE: 'וינה', LCA: 'לרנקה', DXB: 'דובאי', BKK: 'בנגקוק', NRT: 'טוקיו', YYZ: 'טורונטו' };
   var AIRLINE = { LY: 'אל על', IZ: 'ארקיע', '6H': 'ישראייר' };
+  // Place names from docs/airports.json rows: [code, city, airport, country, rank, hebrew].
+  var PLACES = {};
+  function setPlaces(rows) { PLACES = {}; (rows || []).forEach(function (r) { PLACES[r[0]] = r; }); }
+  function placeName(code) { var r = PLACES[code]; return CITY[code] || (r && (r[5] || r[1])) || code; }
   function dmy(iso) { return Number(iso.slice(8)) + '.' + Number(iso.slice(5, 7)) + '.' + iso.slice(0, 4); }
   // Human-readable summary of the preferences, as lines (bold title marked with <b>). Same text in the bot and the page.
   function describe(p0) {
@@ -176,7 +184,7 @@
     var cabin = { economy: 'תיירים', premium: 'פרימיום', business: 'עסקים', first: 'ראשונה' }[p.cabin];
     var bags = [p.carryOn ? 'תיק עלייה' : '', p.checkedBags ? (p.checkedBags === 1 ? 'מזוודה' : p.checkedBags + ' מזוודות') : ''].filter(Boolean).join(' + ') || 'בלי כבודה';
     var lines = [
-      '✈️ <b>' + (CITY[p.origin] || p.origin) + ' ' + (p.oneWay ? '→' : '⇄') + ' ' + (CITY[p.destination] || p.destination) + '</b>',
+      '✈️ <b>' + placeName(p.origin) + ' ' + (p.oneWay ? '→' : '⇄') + ' ' + placeName(p.destination) + '</b>',
       '👥 ' + pax + ' · מחלקת ' + cabin,
       leg('🛫', 'הלוך', p.outFrom, p.outTo, p.airline, p.outMaxStops, p.outMaxHours, p.outDepFrom, p.outDepTo),
     ];
@@ -191,5 +199,5 @@
     return lines;
   }
 
-  return { describe: describe, CITY: CITY, AIRLINE: AIRLINE, encode: encode, decode: decode, validate: validate, withDefaults: withDefaults, LIMITS: LIMITS, CABINS: CABINS, VERSION: VERSION };
+  return { setPlaces: setPlaces, placeName: placeName, describe: describe, CITY: CITY, AIRLINE: AIRLINE, encode: encode, decode: decode, validate: validate, withDefaults: withDefaults, LIMITS: LIMITS, CABINS: CABINS, VERSION: VERSION };
 }));
