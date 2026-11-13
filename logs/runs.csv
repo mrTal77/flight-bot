@@ -1,0 +1,2 @@
+time_utc,run,user,mode,seconds,kayak_ok,kayak_failed,kayak_blocked,kayak_skipped,kiwi_ok,kiwi_failed,kiwi_blocked,kiwi_skipped,google_ok,google_failed,google_blocked,google_skipped,valid_offers,outcome
+2026-11-13T17:05:49Z,43468970472,u7c851ff58a,summary,96,0,0,10,6,3,0,0,0,10,0,0,0,0,crash: fetch failed
