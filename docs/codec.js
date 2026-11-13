@@ -150,5 +150,46 @@
     return p;
   }
 
-  return { encode: encode, decode: decode, validate: validate, withDefaults: withDefaults, LIMITS: LIMITS, CABINS: CABINS, VERSION: VERSION };
+
+  var CITY = { TLV: 'תל אביב', MIA: 'מיאמי', JFK: 'ניו יורק', EWR: 'ניו יורק', LAX: 'לוס אנג׳לס', LHR: 'לונדון', CDG: 'פריז',
+    FCO: 'רומא', ATH: 'אתונה', BCN: 'ברצלונה', MAD: 'מדריד', BER: 'ברלין', AMS: 'אמסטרדם', PRG: 'פראג', BUD: 'בודפשט',
+    VIE: 'וינה', LCA: 'לרנקה', DXB: 'דובאי', BKK: 'בנגקוק', NRT: 'טוקיו', YYZ: 'טורונטו' };
+  var AIRLINE = { LY: 'אל על', IZ: 'ארקיע', '6H': 'ישראייר' };
+  function dmy(iso) { return Number(iso.slice(8)) + '.' + Number(iso.slice(5, 7)) + '.' + iso.slice(0, 4); }
+  // Human-readable summary of the preferences, as lines (bold title marked with <b>). Same text in the bot and the page.
+  function describe(p0) {
+    var p = withDefaults(p0);
+    var stops = function (n) { return n === 0 ? 'ישיר' : n === 1 ? 'עד עצירה אחת' : n >= 3 ? 'כל מספר עצירות' : 'עד ' + n + ' עצירות'; };
+    var hours = function (a, b) { return a === 0 && b === 24 ? '' : ' · המראה ' + a + ':00–' + b + ':00'; };
+    // A flexible date arrives as a range around it: show it as "about X (±n days)".
+    var when = function (from, to) {
+      var days = diff(from, to);
+      if (days === 0) return dmy(from);
+      if (days % 2 === 0 && days <= 10) return 'בערך ' + dmy(isoOf(dayNum(from) + days / 2)) + ' (±' + days / 2 + ' ' + (days / 2 === 1 ? 'יום' : 'ימים') + ')';
+      return dmy(from) + '–' + dmy(to);
+    };
+    var leg = function (icon, name, from, to, al, st, mh, df, dt) {
+      return icon + ' ' + name + ': ' + when(from, to) + ' · ' + (al ? AIRLINE[al] || al : 'כל חברה') + ' · ' + stops(st) + (mh ? ' · עד ' + mh + ' ש׳' : '') + hours(df, dt);
+    };
+    var pax = [p.adults + ' ' + (p.adults === 1 ? 'מבוגר' : 'מבוגרים'), p.children ? p.children + ' ' + (p.children === 1 ? 'ילד' : 'ילדים') : '',
+      p.infants ? p.infants + ' ' + (p.infants === 1 ? 'תינוק' : 'תינוקות') : ''].filter(Boolean).join(', ');
+    var cabin = { economy: 'תיירים', premium: 'פרימיום', business: 'עסקים', first: 'ראשונה' }[p.cabin];
+    var bags = [p.carryOn ? 'תיק עלייה' : '', p.checkedBags ? (p.checkedBags === 1 ? 'מזוודה' : p.checkedBags + ' מזוודות') : ''].filter(Boolean).join(' + ') || 'בלי כבודה';
+    var lines = [
+      '✈️ <b>' + (CITY[p.origin] || p.origin) + ' ' + (p.oneWay ? '→' : '⇄') + ' ' + (CITY[p.destination] || p.destination) + '</b>',
+      '👥 ' + pax + ' · מחלקת ' + cabin,
+      leg('🛫', 'הלוך', p.outFrom, p.outTo, p.airline, p.outMaxStops, p.outMaxHours, p.outDepFrom, p.outDepTo),
+    ];
+    if (!p.oneWay) {
+      lines.push(leg('🛬', 'חזור', p.retFrom, p.retTo, p.retAirline, p.retMaxStops, p.retMaxHours, p.retDepFrom, p.retDepTo));
+      if (p.maxTripDays) lines.push('📅 אורך הטיול: עד ' + p.maxTripDays + ' ימים');
+    }
+    if (p.maxLayover) lines.push('⏱️ עצירת ביניים: עד ' + p.maxLayover + ' ש׳');
+    lines.push('🧳 ' + bags + ' לנוסע');
+    if (p.selfTransfer) lines.push('🔀 כולל כרטיסים נפרדים בהעברה עצמית (לא מוגן)');
+    lines.push('🔔 התראה מתחת ל-$' + p.maxPrice.toLocaleString('en-US') + (p.adults + p.children + p.infants > 1 ? ' לנוסע' : ''));
+    return lines;
+  }
+
+  return { describe: describe, CITY: CITY, AIRLINE: AIRLINE, encode: encode, decode: decode, validate: validate, withDefaults: withDefaults, LIMITS: LIMITS, CABINS: CABINS, VERSION: VERSION };
 }));

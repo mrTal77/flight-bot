@@ -65,6 +65,9 @@
   .done a.go { display: block; margin: 14px 0 8px; padding: 14px; border-radius: 12px; background: var(--accent); color: var(--accent-ink); text-decoration: none; font-weight: 700; }
   .done ol { text-align: right; color: var(--muted); padding-inline-start: 20px; }
   .blocked { display: none; }
+  .testbar { background: #fff4d6; color: #6b4e00; border-radius: 10px; padding: 8px 12px; margin-bottom: 14px; font-size: 14px; }
+  @media (prefers-color-scheme: dark) { .testbar { background: #3a2f12; color: #f3d48b; } }
+  .preview { white-space: pre-line; line-height: 1.9; margin-bottom: 10px; }
   .copy { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
   .copy code { flex: 1; min-width: 0; overflow-wrap: anywhere; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px; font-size: 13px; text-align: left; }
   .copy button { width: auto; padding: 8px 12px; font-size: 14px; }
@@ -85,6 +88,7 @@
     <p>ההרשמה פתוחה רק דרך קישור הזמנה. בקשו את הקישור ממי ששיתף איתכם את הבוט.</p>
   </section>
 
+  <div class="testbar" id="testBar" hidden>🧪 מצב בדיקה: אחרי "אישרתי" יוצג סיכום בלבד, בלי לשלוח כלום לבוט.</div>
   <form id="form" novalidate>
     <section class="card">
       <h2><span class="n">1</span> מסלול ונוסעים</h2>
@@ -211,6 +215,13 @@
     <p class="foot">הפרטים נשלחים רק לבוט בטלגרם ונשמרים אצלו מוצפנים. מי ששיתף איתכם את הבוט רואה את פרטי החיפוש שלכם (מסלול, תאריכים וסף מחיר). אפשר להפסיק בכל רגע עם הפקודה &#x2066;/stop&#x2069; בבוט.</p>
   </form>
 
+  <section class="card" id="preview" hidden>
+    <h2>🧪 מצב בדיקה: זה מה שהבוט היה מקבל</h2>
+    <div id="previewText" class="preview"></div>
+    <p class="hint">שום דבר לא נשלח לבוט, וההרשמה הקיימת לא השתנתה.</p>
+    <p class="foot">קוד ההרשמה: <code id="previewCode" dir="ltr"></code> · <a href="#" id="previewBack">חזרה לטופס</a></p>
+  </section>
+
   <section class="card done" id="done">
     <div class="big">✅</div>
     <h2 style="justify-content:center">כמעט סיימנו</h2>
@@ -235,6 +246,7 @@
   var $ = function (id) { return document.getElementById(id); };
   var params = new URLSearchParams(location.search);
   var invite = (params.get('i') || '').trim();
+  var TEST = params.get('test') === '1';
   try { if (invite) localStorage.setItem('fw-invite', invite); else invite = localStorage.getItem('fw-invite') || ''; } catch (e) {}
   if (!/^[A-Za-z0-9_-]{6}$/.test(invite)) { $('noInvite').style.display = 'block'; $('form').hidden = true; return; }
 
@@ -254,6 +266,7 @@
 
   var iso = function (d) { return new Date(d.getTime() - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10); };
   var todayIso = iso(new Date());
+  if (TEST) $('testBar').hidden = false;
   ['outFrom', 'outTo', 'retFrom', 'retTo', 'outDate', 'retDate'].forEach(function (id) { $(id).min = todayIso; });
   ['out', 'ret'].forEach(function (k) {
     function sync() { var flex = $(k + 'Flex').checked; $(k + 'FlexBox').hidden = !flex; $(k + 'RangeBox').hidden = flex; }
@@ -313,6 +326,14 @@
     }
     box.style.display = 'none';
     var code = FlightCodec.encode(p);
+    if (TEST) {
+      var esc = function (t) { return t.replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); };
+      // Decode the code back, exactly like the bot does, and show the bot's summary.
+      $('previewText').innerHTML = FlightCodec.describe(FlightCodec.decode(code)).map(function (l) { return esc(l).replace(/&lt;(\/?)b&gt;/g, '<$1b>'); }).join('\n');
+      $('previewCode').textContent = code;
+      $('form').hidden = true; $('preview').hidden = false; window.scrollTo(0, 0);
+      return;
+    }
     $('tgLink').href = 'https://t.me/' + BOT + '?start=' + code;
     $('startMsg').textContent = '/start ' + code;
     $('form').hidden = true; $('done').style.display = 'block'; window.scrollTo(0, 0);
@@ -322,6 +343,7 @@
     var done = function () { b.textContent = 'הועתק ✓'; setTimeout(function () { b.textContent = 'העתקה'; }, 2000); };
     if (navigator.clipboard) navigator.clipboard.writeText(t).then(done, function () {}); else { var r = document.createRange(); r.selectNode($('startMsg')); getSelection().removeAllRanges(); getSelection().addRange(r); done(); }
   });
+  $('previewBack').addEventListener('click', function (e) { e.preventDefault(); $('preview').hidden = true; $('form').hidden = false; });
   $('back').addEventListener('click', function (e) { e.preventDefault(); $('done').style.display = 'none'; $('form').hidden = false; });
 }());
 </script>

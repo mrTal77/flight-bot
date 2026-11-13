@@ -17,8 +17,7 @@ const updatesFile = argv.includes('--updates') ? argv[argv.indexOf('--updates') 
 const TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
 const OWNER_CHAT = (process.env.TELEGRAM_CHAT_ID || '').trim(); // the bot owner's chat (gets the extra searches)
 
-const CITY = { TLV: 'תל אביב', MIA: 'מיאמי', JFK: 'ניו יורק', LHR: 'לונדון', CDG: 'פריז', BKK: 'בנגקוק', ATH: 'אתונה', BCN: 'ברצלונה' };
-const AIRLINE = { LY: 'אל על', IZ: 'ארקיע', '6H': 'ישראייר' };
+const CITY = codec.CITY;
 const d = (iso) => `${Number(iso.slice(8))}.${Number(iso.slice(5, 7))}.${iso.slice(0, 4)}`;
 
 async function tg(method, body) {
@@ -34,40 +33,7 @@ async function reply(chatId, text) {
   await tg('sendMessage', { chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true });
 }
 
-function prefsText(p0) {
-  const p = codec.withDefaults(p0);
-  const stops = (n) => (n === 0 ? 'ישיר' : n === 1 ? 'עד עצירה אחת' : `עד ${n} עצירות`);
-  const hours = (from, to) => (from === 0 && to === 24 ? '' : ` · המראה ${from}:00–${to}:00`);
-  // A flexible date from the landing page arrives as a range around it: show it as "about X (±n days)".
-  const when = (from, to) => {
-    const days = Math.round((Date.parse(to) - Date.parse(from)) / 864e5);
-    if (days === 0) return d(from);
-    if (days % 2 === 0 && days <= 10) {
-      const mid = new Date(Date.parse(from) + (days / 2) * 864e5).toISOString().slice(0, 10);
-      return `בערך ${d(mid)} (±${days / 2} ${days / 2 === 1 ? 'יום' : 'ימים'})`;
-    }
-    return `${d(from)}–${d(to)}`;
-  };
-  const leg = (icon, name, from, to, airline, maxStops, maxHours, depFrom, depTo) =>
-    `${icon} ${name}: ${when(from, to)} · ${airline ? AIRLINE[airline] || airline : 'כל חברה'} · ${stops(maxStops)}${maxHours ? ` · עד ${maxHours} ש׳` : ''}${hours(depFrom, depTo)}`;
-  const pax = [`${p.adults} ${p.adults === 1 ? 'מבוגר' : 'מבוגרים'}`, p.children ? `${p.children} ${p.children === 1 ? 'ילד' : 'ילדים'}` : '', p.infants ? `${p.infants} ${p.infants === 1 ? 'תינוק' : 'תינוקות'}` : ''].filter(Boolean).join(', ');
-  const cabin = { economy: 'תיירים', premium: 'פרימיום', business: 'עסקים', first: 'ראשונה' }[p.cabin];
-  const bags = [p.carryOn ? 'תיק עלייה' : '', p.checkedBags ? (p.checkedBags === 1 ? 'מזוודה' : `${p.checkedBags} מזוודות`) : ''].filter(Boolean).join(' + ') || 'בלי כבודה';
-  const lines = [
-    `✈️ <b>${CITY[p.origin] || p.origin} ${p.oneWay ? '→' : '⇄'} ${CITY[p.destination] || p.destination}</b>`,
-    `👥 ${pax} · מחלקת ${cabin}`,
-    leg('🛫', 'הלוך', p.outFrom, p.outTo, p.airline, p.outMaxStops, p.outMaxHours, p.outDepFrom, p.outDepTo),
-  ];
-  if (!p.oneWay) {
-    lines.push(leg('🛬', 'חזור', p.retFrom, p.retTo, p.retAirline, p.retMaxStops, p.retMaxHours, p.retDepFrom, p.retDepTo));
-    if (p.maxTripDays) lines.push(`📅 אורך הטיול: עד ${p.maxTripDays} ימים`);
-  }
-  if (p.maxLayover) lines.push(`⏱️ עצירת ביניים: עד ${p.maxLayover} ש׳`);
-  lines.push(`🧳 ${bags} לנוסע`);
-  if (p.selfTransfer) lines.push('🔀 כולל כרטיסים נפרדים בהעברה עצמית (לא מוגן)');
-  lines.push(`🔔 התראה מתחת ל-$${p.maxPrice.toLocaleString('en-US')}${p.adults + p.children + p.infants > 1 ? ' לנוסע' : ''}`);
-  return lines.join('\n');
-}
+function prefsText(p) { return codec.describe(p).join('\n'); }
 
 const esc = (t) => String(t || '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
 const routeOf = (p) => `${CITY[p.origin] || p.origin} ${p.oneWay ? '→' : '⇄'} ${CITY[p.destination] || p.destination}`;
@@ -85,7 +51,6 @@ const HELP = [
   '',
   '/status · ההגדרות שלך והמחיר הכי טוב שנמצא',
   '/stop · הפסקת החיפוש ומחיקת הפרטים שלך',
-  '/users · (לבעלים בלבד) רשימת המשתמשים',
   'כדי לשנות הגדרות: למלא שוב את הטופס בדף ההרשמה וללחוץ אישור.',
 ].join('\n');
 
@@ -162,7 +127,7 @@ async function handle(db, msg, todayIso, toDispatch) {
     await reply(chatId, `${prefsText(existing.prefs)}${best}`);
     return;
   }
-  await reply(chatId, existing ? HELP : '👋 כדי להירשם צריך לפתוח את קישור ההרשמה שקיבלת.');
+  await reply(chatId, existing ? HELP + (existing.owner ? '\n/users · רשימת המשתמשים (רק לך)' : '') : '👋 כדי להירשם צריך לפתוח את קישור ההרשמה שקיבלת.');
 }
 
 async function main() {
