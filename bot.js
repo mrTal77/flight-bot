@@ -5,6 +5,7 @@
 // One user per Telegram chat: a new sign-up or edit from the same chat replaces that user's settings.
 // Usage:
 //   node bot.js                          process new Telegram messages
+//   node bot.js --start-searches         after the users file is pushed: start searches for new or changed users
 //   node bot.js --dry --updates file     test with saved updates; print replies instead of sending
 // Public run logs show only counts, never names, chat ids or trip details.
 const fs = require('fs');
@@ -18,6 +19,7 @@ const DRY = argv.includes('--dry');
 const updatesFile = argv.includes('--updates') ? argv[argv.indexOf('--updates') + 1] : null;
 const TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
 const OWNER_CHAT = (process.env.TELEGRAM_CHAT_ID || '').trim(); // the bot owner (admin)
+const PENDING = path.join(process.env.RUNNER_TEMP || require('os').tmpdir(), 'flight-bot-pending.json'); // outside the repo
 
 const AIRPORTS = JSON.parse(fs.readFileSync(path.join(__dirname, 'docs', 'airports.json'), 'utf8'));
 codec.setPlaces(AIRPORTS);
@@ -362,10 +364,19 @@ async function main() {
     try { await handle(db, u.message, today, toDispatch); } catch (e) { console.log('message failed:', e.message.slice(0, 80)); }
   }
   store.saveUsers(db);
-  let started = 0;
-  for (const id of [...new Set(toDispatch)]) if (await dispatchSearch(id)) started++;
-  console.log(`processed ${updates.length} messages; users: ${Object.keys(db.users).length}; searches started: ${started}`);
+  // Searches start only after the workflow has pushed the users file (a search started earlier would not see the change).
+  const ids = [...new Set(toDispatch)];
+  fs.writeFileSync(PENDING, JSON.stringify(ids));
+  console.log(`processed ${updates.length} messages; users: ${Object.keys(db.users).length}; searches to start: ${ids.length}`);
 }
 
-if (require.main === module) main().catch((e) => { console.error('ERROR', e.message); process.exit(1); });
+// Second step, after the users file was pushed: start the searches recorded by main().
+async function startPending() {
+  let ids = []; try { ids = JSON.parse(fs.readFileSync(PENDING, 'utf8')); } catch {}
+  let started = 0;
+  for (const id of ids) if (await dispatchSearch(id)) started++;
+  console.log(`searches started: ${started} of ${ids.length}`);
+}
+
+if (require.main === module) (argv.includes('--start-searches') ? startPending() : main()).catch((e) => { console.error('ERROR', e.message); process.exit(1); });
 module.exports = { prefsText, parseDates, parseDate, findPlaces, parseCommand, handle };

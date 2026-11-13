@@ -28,7 +28,6 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node bot.js
       - name: Save users
         run: |
@@ -39,3 +38,7 @@ jobs:
           git commit -m "users update"
           for i in 1 2 3 4 5; do git pull --rebase origin main && git push && exit 0; sleep $((RANDOM % 10 + 3)); done
           exit 1
+      - name: Start searches for new or changed users
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node bot.js --start-searches
