@@ -62,6 +62,15 @@ if (process.env.MAX_PRICE_USD) CONFIG.maxPriceUsd = Number(process.env.MAX_PRICE
 const OUT = CONFIG.outbound;
 const RET = CONFIG.return; // null for one-way
 const OWNER = !!USER.owner; // the bot owner also gets Duffel (El Al nonstop fares; needs DUFFEL_TOKEN)
+// Per-user extras from config.json "userExtras" (keyed by the random user id; no personal data):
+//   preferAirlines: airline codes this user prefers. Their nonstop flights get their own searches and are
+//   shown first, marked ⭐ (asked for by a user for whom only these airlines fly nonstop).
+const EXTRA = ((BASE.userExtras || {})[USER.id]) || {};
+const PREFER = (EXTRA.preferAirlines || []).map((x) => String(x).toUpperCase());
+// Names the sources use for an airline code (Kiwi gives codes; Google and Kayak give names).
+const AIRLINE_NAME_RE = { Y4: /volaris/i, AM: /aero ?m[eé]xico/i, VB: /viva ?aerobus/i, LY: /el ?al|אל על/i, IZ: /arkia|ארקיע/i, '6H': /israir|ישראייר/i };
+const flies = (leg, code) => !!leg && ((leg.carriers && leg.carriers.length && leg.carriers.every((c) => c === code))
+  || (!(leg.carriers && leg.carriers.length) && !!AIRLINE_NAME_RE[code] && AIRLINE_NAME_RE[code].test(leg.airline || '') && !/[+,]/.test(leg.airline || '')));
 const PAX = CONFIG.pax.adults + CONFIG.pax.children + CONFIG.pax.infants;
 const BAG_PAX = CONFIG.pax.adults + CONFIG.pax.children; // infants get no bag allowance
 const SIMPLE_PAX = PAX === 1 && CONFIG.cabin === 'economy'; // sources that only handle 1 adult in economy
@@ -412,6 +421,13 @@ async function searchKiwi() {
     max_sector_stopovers: OUT.maxStops, ...(OUT.maxHours ? { max_fly_duration: OUT.maxHours } : {}), ...kiwiTimes(OUT, ''),
     ...(OUT.airline ? { select_airlines: OUT.airline } : {}) };
   await call('out', outArgs);
+  // The user's preferred airlines, nonstop, searched on their own (a general search returns only its 15 cheapest).
+  const preferJobs = OUT.airline ? [] : PREFER.flatMap((code) => [
+    call('out', { ...outArgs, select_airlines: code, max_sector_stopovers: 0 }),
+    ...(RET && !RET.airline ? [call('ret', { flyFrom: CONFIG.destination, flyTo: CONFIG.origin, departureDate: dmy(RET.from), departureDateTo: dmy(RET.to),
+      max_sector_stopovers: 0, ...kiwiTimes(RET, ''), select_airlines: code })] : []),
+  ]);
+  await Promise.all(preferJobs);
   if (!RET) return { results, errors, slot: null };
   const maxH = Math.max(OUT.maxHours || 0, RET.maxHours || 0);
   const rtBase = { flyFrom: CONFIG.origin, flyTo: CONFIG.destination, departureDate: dmy(OUT.from), departureDateTo: dmy(OUT.to),
@@ -665,6 +681,7 @@ function alsoText(c) {
 // Wizz Air and Ryanair open with the route, dates and passengers filled in (checked 13.11.2026); the other sites
 // block automated checks, so they get their home page rather than an untested search link.
 const LOW_COST = [
+  [/volaris/i, 'Volaris', 'https://www.volaris.com'], [/aero ?m[eé]xico/i, 'Aeroméxico', 'https://www.aeromexico.com'],
   [/wizz/i, 'Wizz Air', (o, d, a, b, p) => `https://wizzair.com/en-gb/booking/select-flight/${o}/${d}/${a}/${b || 'null'}/${p.adults}/${p.children}/${p.infants}/null`],
   [/ryanair/i, 'Ryanair', (o, d, a, b, p) => `https://www.ryanair.com/gb/en/trip/flights/select?adults=${p.adults}&teens=0&children=${p.children}&infants=${p.infants}&dateOut=${a}&dateIn=${b || ''}&isConnectedFlight=false&isReturn=${!!b}&discount=0&originIata=${o}&destinationIata=${d}`],
   [/easy ?jet/i, 'easyJet', 'https://www.easyjet.com/en'], [/pegasus/i, 'Pegasus', 'https://www.flypgs.com/en'],
@@ -690,6 +707,26 @@ function lowCostLinks(c) {
     if (back) links.push(mk(back, CONFIG.destination, CONFIG.origin, legs[1].date, null));
   }
   return links.length ? `\n🔗 גם באתר החברה: ${[...new Set(links)].join(' · ')}` : '';
+}
+// The user's preferred airlines: their cheapest nonstop option each (bags rule met), shown first with ⭐.
+function preferredFirst(list) {
+  if (!PREFER.length) return { pref: [], rest: list };
+  const nonstop = (c) => c.offers.every((o) => o.legs.every((l) => l.stops === 0 || l.stops === undefined && !l.time));
+  const legsOf = (c) => (c.kind === 'mixed' ? [c.offers[0].legs[0], c.offers[1].legs[0]] : c.offers[0].legs.filter((l) => l.time));
+  const pref = [];
+  for (const code of PREFER) {
+    const hit = list.find((c) => nonstop(c) && legsOf(c).length && legsOf(c).every((l) => flies(l, code)) && !pref.includes(c));
+    if (hit) pref.push(hit);
+  }
+  const same = (a, b) => a.out === b.out && a.ret === b.ret && Math.round(a.usd) === Math.round(b.usd);
+  return { pref, rest: list.filter((c) => !pref.some((p) => p === c || same(p, c))) };
+}
+function optionsText(list, n) {
+  const { pref, rest } = preferredFirst(list);
+  const others = pickDiverse(rest, Math.max(1, n - pref.length));
+  const names = PREFER.map((x) => ({ Y4: 'Volaris', AM: 'Aeroméxico', VB: 'Viva Aerobus' }[x] || x)).join(' / ');
+  const prefText = pref.length ? [`⭐ <b>טיסות ישירות ב-${names}:</b>`, pref.map((c, i) => candText(c, i)).join('\n\n'), '', ...(others.length ? ['<b>אפשרויות נוספות:</b>'] : [])] : [];
+  return [...prefText, others.map((c, i) => candText(c, i + pref.length)).join('\n\n')].join('\n');
 }
 function candText(c, i) {
   if (c.kind === 'ow') {
@@ -805,10 +842,19 @@ async function main() {
       for (const [od, o] of outBy) for (const [rd, r] of retBy) if (pairOk(od, rd)) cands.push({ kind: 'mixed', out: od, ret: rd, usd: o.usd + r.usd, offers: [o, r] });
     }
   }
+  // Preferred airlines (per-user extra): also keep their own cheapest nonstop one-way per date, so a cheaper
+  // flight on another airline the same day does not hide them.
+  for (const code of PREFER) {
+    for (const wb of ['yes', 'unknown']) {
+      const m = new Map();
+      for (const o of offers.filter((x) => x.kind === 'out' && bagState(x) === wb && x.legs[0].stops === 0 && flies(x.legs[0], code))) if (!m.has(o.legs[0].date) || o.usd < m.get(o.legs[0].date).usd) m.set(o.legs[0].date, o);
+      if (!RET) for (const [od, o] of m) cands.push({ kind: 'ow', out: od, ret: null, usd: o.usd, offers: [o], prefer: code });
+    }
+  }
   cands.sort((a, b) => a.usd - b.usd);
   // One line per (kind, dates, bag known): a cheaper no-bag price must not hide the with-bag price of the same trip.
   const seen = new Set();
-  const top = cands.filter((c) => { const k = `${c.kind}|${c.out}|${c.ret}|${c.offers.map(bagState).join(',')}`; if (seen.has(k)) return false; seen.add(k); return true; });
+  const top = cands.filter((c) => { const k = `${c.kind}|${c.out}|${c.ret}|${c.offers.map(bagState).join(',')}|${c.prefer || ''}`; if (seen.has(k)) return false; seen.add(k); return true; });
   if (process.env.DUMP_OFFERS) fs.writeFileSync(process.env.DUMP_OFFERS, JSON.stringify({ at: now.toISOString(), ils: ILS_PER_USD, offers }, null, 0));
   const best = top[0];
   const bestBag = top.find((c) => c.offers.every(bagReq)); // cheapest that meets the bag rule
@@ -853,7 +899,7 @@ async function main() {
       ...(TEST ? ['🧪 <i>הודעת בדיקה, הסף הועלה זמנית</i>'] : []),
       `🔔 <b>נמצא מחיר מתחת ל-${fmtBoth(CONFIG.maxPriceUsd)}!</b>`,
       title, '',
-      pickDiverse(under, 5).map(candText).join('\n\n'), '',
+      optionsText(under, 5), '',
       ...(under.slice(0, 5).some(bagUnknown) ? ['<i>* לא ידוע אם הכבודה כלולה במחיר</i>'] : []),
       '💡 לפתוח בגלישה בסתר, לוודא שהמזוודה כלולה, ולקנות מהר.',
     ].join('\n'));
@@ -879,7 +925,7 @@ async function main() {
       rules, '',
       bestBag ? `הזול ביותר${PAX > 1 ? ' (לנוסע)' : ''}: ${priceTag(bestBag)} · הסף: ${fmtBoth(CONFIG.maxPriceUsd)}` : `לא נמצא מחיר מתאים · הסף: ${fmtBoth(CONFIG.maxPriceUsd)}`,
       ...(ILS_PER_USD ? [`💱 שער היום: $1 = ₪${ILS_PER_USD.toFixed(2)}`] : []), '',
-      pickDiverse(top.filter((c) => c.offers.every(bagReq)), 5).map(candText).join('\n\n'), '',
+      optionsText(top.filter((c) => c.offers.every(bagReq)), 5), '',
       ...(top.filter((c) => c.offers.every(bagReq)).slice(0, 5).some(bagUnknown) ? ['<i>* לא ידוע אם הכבודה כלולה במחיר</i>'] : []),
       ...(rtBySource ? [`📊 הלוך-חזור לפי אתר: ${rtBySource}`] : []),
       ...(mixed ? [`🔀 שני כרטיסים נפרדים: מ-${fmtBoth(mixed.usd)}`] : []),
@@ -901,4 +947,4 @@ if (require.main === module) {
     process.exit(1);
   });
 }
-module.exports = { scrub, tracked, appendCsv, googleTfs, googleUrl, parseGoogleLabel, googleTasks, lowCostLinks, retryOnce, bagState, configFor, slotFrom, bagReq, bagOk, kayakUrlForTest: kayakUrl, pickDiverse, tripType, setIlsRate: (r) => { ILS_PER_USD = r; }, pairOk, legOkOut, legOkRet, parseKayakCards, candText, pickDistinct, searchCenters };
+module.exports = { preferredFirst, optionsText, flies, scrub, tracked, appendCsv, googleTfs, googleUrl, parseGoogleLabel, googleTasks, lowCostLinks, retryOnce, bagState, configFor, slotFrom, bagReq, bagOk, kayakUrlForTest: kayakUrl, pickDiverse, tripType, setIlsRate: (r) => { ILS_PER_USD = r; }, pairOk, legOkOut, legOkRet, parseKayakCards, candText, pickDistinct, searchCenters };

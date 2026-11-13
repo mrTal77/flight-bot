@@ -74,6 +74,7 @@ Everything runs on free GitHub services: GitHub Actions (searches and the bot) a
 | `realertDropUsd`, `realertHours` | when to alert again |
 | `markets` | Kayak sites; `bagFilter` makes prices include a checked bag |
 | `kiwi`, `googleDaily`, `googleMaxSearches`, `duffelEveryHours` | sources on/off, Google searches a day |
+| `userExtras` | per user (random id): `preferAirlines` codes get their own nonstop Kiwi searches and are shown first (⭐) |
 
 ## Local test
 

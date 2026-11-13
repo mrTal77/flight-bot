@@ -34,5 +34,13 @@
   "duffelEveryHours": 8,
   "concurrency": 6,
   "pagesUrl": "https://mrtal77.github.io/flight-bot/",
-  "googleMaxSearches": 10
+  "googleMaxSearches": 10,
+  "userExtras": {
+    "uab7fee9cec": {
+      "preferAirlines": [
+        "Y4",
+        "AM"
+      ]
+    }
+  }
 }

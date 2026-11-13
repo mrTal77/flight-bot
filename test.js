@@ -237,3 +237,14 @@ console.log('kayak filter test passed');
     console.log('search log tests passed');
   })().catch((e) => { console.error(e); process.exit(1); });
 }
+
+// Airline match for per-user preferred airlines (codes from Kiwi, names from Google/Kayak)
+{
+  const W = require('./watch.js');
+  assert.ok(W.flies({ carriers: ['Y4'], airline: 'Volaris' }, 'Y4'));
+  assert.ok(!W.flies({ carriers: ['Y4', 'AM'], airline: 'Volaris + Aeromexico' }, 'Y4'));
+  assert.ok(W.flies({ airline: 'Aeromexico' }, 'AM') && W.flies({ airline: 'Aeroméxico' }, 'AM'));
+  assert.ok(!W.flies({ airline: 'Volaris, Aeromexico' }, 'AM'));
+  assert.deepEqual(W.preferredFirst([{ kind: 'ow' }]).pref, []); // test profile has no preferred airlines
+  console.log('preferred airline tests passed');
+}
