@@ -1,0 +1,32 @@
+{
+  "botUsername": "Ffffffflightticketbot",
+  "maxUsers": 10,
+  "invites": [
+    {
+      "label": "default",
+      "sha256": "27d3f499a8dc77e50e95ee32d0493fb8df23ef51359f301c1d80e6c507b3397d"
+    }
+  ],
+  "realertDropUsd": 10,
+  "realertHours": 12,
+  "markets": [
+    {
+      "host": "www.he.kayak.com",
+      "currency": "ILS",
+      "linkHost": "il.kayak.com",
+      "label": "Kayak ישראל",
+      "bagFilter": true
+    }
+  ],
+  "kiwi": true,
+  "googleDaily": true,
+  "googleMarkets": [
+    {
+      "gl": "IL",
+      "label": "Google Flights ישראל"
+    }
+  ],
+  "duffelEveryHours": 8,
+  "concurrency": 6,
+  "challenger": true
+}

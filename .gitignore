@@ -1,0 +1,4 @@
+node_modules/
+*.png
+*.log
+my-profile*.json

@@ -1,0 +1,13 @@
+{
+  "name": "flight-watch",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Free Telegram bot that watches flight prices for several users",
+  "scripts": {
+    "test": "node test.js",
+    "bot": "node bot.js"
+  },
+  "dependencies": {
+    "playwright": "1.63.0"
+  }
+}

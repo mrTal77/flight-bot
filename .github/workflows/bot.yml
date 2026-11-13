@@ -1,0 +1,41 @@
+name: telegram-bot
+
+# Reads new Telegram messages (sign-ups from the landing page, /status, /stop) every few minutes.
+# GitHub may delay scheduled runs, so a reply can take 5-20 minutes.
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write   # to commit the encrypted users file
+  actions: write    # to start a first search for a new user
+
+concurrency:
+  group: telegram-bot
+  cancel-in-progress: false
+
+jobs:
+  bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Process messages
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node bot.js
+      - name: Save users
+        run: |
+          git add data/users.enc 2>/dev/null || exit 0
+          git diff --cached --quiet && exit 0
+          git config user.name "flight-watch-bot"
+          git config user.email "flight-watch-bot@users.noreply.github.com"
+          git commit -m "users update"
+          for i in 1 2 3 4 5; do git pull --rebase origin main && git push && exit 0; sleep $((RANDOM % 10 + 3)); done
+          exit 1
