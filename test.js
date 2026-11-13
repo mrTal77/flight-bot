@@ -143,3 +143,34 @@ console.log('kayak filter test passed');
   assert.deepEqual(C.validate({ ...base, maxTripDays: 0 }, '2030-11-01'), []);
   console.log('trip length tests passed');
 }
+
+// Language: the code carries the page language; old codes (v2/v3) decode as Hebrew; errors come in the user's language
+{
+  const C = require('./docs/codec.js');
+  const p = { invite: 'Ab3_x9', origin: 'TLV', destination: 'ATH', outFrom: '2030-11-14', outTo: '2030-11-20', oneWay: true, maxPrice: 300, lang: 'en' };
+  assert.equal(C.decode(C.encode(p)).lang, 'en');
+  assert.equal(C.decode(C.encode({ ...p, lang: 'he' })).lang, 'he');
+  assert.ok(C.validate({ ...p, destination: 'TLV' }, '2030-11-01', 'en')[0].match(/[a-z]/i), 'English error');
+  assert.ok(/[֐-׿]/.test(C.validate({ ...p, destination: 'TLV' }, '2030-11-01', 'he')[0]), 'Hebrew error');
+  assert.ok(C.describe(p, 'en').join(' ').includes('Alert under'), 'English description');
+  console.log('language tests passed');
+}
+
+// Chat edits: dates, destinations, commands; one user per chat, an update replaces the old settings
+{
+  process.env.TELEGRAM_BOT_TOKEN = 'unit-test-token';
+  const bot = require('./bot.js');
+  assert.deepEqual(bot.parseDates('21.12 3', '2030-11-13'), ['2030-12-18', '2030-12-24']);
+  assert.deepEqual(bot.parseDates('20.12-30.12', '2030-11-13'), ['2030-12-20', '2030-12-30']);
+  assert.deepEqual(bot.parseDates('28.12-5.1', '2030-11-13'), ['2030-12-28', '2031-01-05']);
+  assert.deepEqual(bot.parseDates('5.1', '2030-11-13'), ['2031-01-05', '2031-01-05']);
+  assert.equal(bot.parseDates('31.2', '2030-11-13'), null);
+  assert.equal(bot.parseDates('soon', '2030-11-13'), null);
+  assert.deepEqual(bot.findPlaces('אתונה').map((r) => r[0]), ['ATH']);
+  assert.deepEqual(bot.findPlaces('athens').map((r) => r[0]), ['ATH']);
+  assert.ok(bot.findPlaces('london').length > 1, 'several London airports to choose from');
+  assert.deepEqual(bot.parseCommand('מחיר 900'), { cmd: 'price', arg: '900' });
+  assert.deepEqual(bot.parseCommand('/price@SomeBot 800'), { cmd: 'price', arg: '800' });
+  assert.equal(bot.parseCommand('hello'), null);
+  console.log('chat edit tests passed');
+}

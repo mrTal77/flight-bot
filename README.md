@@ -11,7 +11,7 @@ Everything runs on free GitHub services: GitHub Actions (searches and the bot) a
 - **Landing page** (`docs/`, GitHub Pages): a form with flexible dates (a date ±1/3/5 days, or a range up to 31 days), passengers, cabin, bags, stops, flight time, departure hours, airlines per direction, layover limit and self-transfer. On "confirm" it packs the preferences into a short code
   (`docs/codec.js`) and opens `t.me/<bot>?start=<code>`. Sign-up needs an invite link (`?i=<invite>`).
 - **Bot** (`bot.js`, every 5 minutes): reads new Telegram messages, checks the invite, validates the preferences,
-  stores the user and starts a first search. Commands: `/status`, `/stop` (deletes the user's data), `/help`.
+  stores the user and starts a first search. Commands: `/status`, `/edit` (link to the user's own form, prefilled; saving it replaces their settings), `/price`, `/dest`, `/out`, `/back` (change one setting in the chat), `/lang`, `/stop` (deletes the user's data), `/help`. One user per Telegram chat: any update replaces that user's settings.
 - **Search** (`watch.js`, every 4 hours + a daily summary): one job per user, in parallel. Sources:
   - Kayak in a headless browser, Israel (with Kayak's checked-bag filter) and Australia, "±3 days" grids:
     one-way outbound, one-way returns, and round trips.

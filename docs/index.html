@@ -9,19 +9,23 @@
   :root {
     --bg: #f5f6f8; --card: #ffffff; --text: #16191f; --muted: #5d6573; --line: #dfe3ea;
     --accent: #1f6feb; --accent-ink: #ffffff; --soft: #eef4ff; --bad: #b42318; --bad-soft: #fdecea;
-    --radius: 14px;
+    --warn: #fff4d6; --warn-ink: #6b4e00; --radius: 14px;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #0f1218; --card: #171b23; --text: #e8ebf0; --muted: #9aa3b2; --line: #2a303b;
       --accent: #4c8dff; --accent-ink: #0b0d12; --soft: #18233a; --bad: #ff8a80; --bad-soft: #3a1d1d;
+      --warn: #3a2f12; --warn-ink: #f3d48b;
     }
   }
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
   body { margin: 0; background: var(--bg); color: var(--text);
     font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Arial, "Noto Sans Hebrew", sans-serif; }
-  main { max-width: 560px; margin: 0 auto; padding: 24px 16px 48px; }
+  main { max-width: 560px; margin: 0 auto; padding: 16px 16px 48px; }
+  .top { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+  .lang { font: inherit; font-size: 14px; font-weight: 600; width: auto; padding: 6px 12px; border-radius: 999px;
+    background: var(--card); color: var(--text); border: 1px solid var(--line); cursor: pointer; }
   header { margin-bottom: 18px; }
   h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -0.01em; }
   .lead { color: var(--muted); margin: 0; }
@@ -36,9 +40,8 @@
   input, select { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line);
     border-radius: 10px; padding: 10px 12px; width: 100%; min-width: 0; }
   input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
-  input.code { text-transform: uppercase; letter-spacing: 0.08em; direction: ltr; text-align: right; }
-  .seg { display: grid; grid-template-columns: 1fr 1fr; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 3px; margin-bottom: 12px; }
-  .seg { position: relative; }
+  input.code { text-transform: uppercase; letter-spacing: 0.08em; direction: ltr; }
+  .seg { position: relative; display: grid; grid-template-columns: 1fr 1fr; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 3px; margin-bottom: 12px; }
   .seg input { position: absolute; top: 0; inset-inline-start: 0; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
   .seg label { text-align: center; padding: 8px; border-radius: 8px; cursor: pointer; color: var(--text); font-size: 15px; }
   .seg input:checked + label { background: var(--card); box-shadow: 0 1px 2px rgba(0,0,0,.12); font-weight: 600; }
@@ -47,8 +50,10 @@
   .check input { width: 20px; height: 20px; accent-color: var(--accent); flex: none; }
   .hint { font-size: 13px; color: var(--muted); margin: -4px 0 8px; }
   .usd { position: relative; }
-  .usd input { padding-left: 34px; direction: ltr; text-align: right; }
-  .usd span { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); }
+  .usd input { padding-inline-start: 34px; direction: ltr; }
+  .usd span { position: absolute; inset-inline-start: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); }
+  [dir="rtl"] .usd input { text-align: right; padding-inline-start: 12px; padding-left: 34px; }
+  [dir="rtl"] .usd span { inset-inline-start: auto; left: 12px; }
   details { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 10px; }
   summary { cursor: pointer; color: var(--accent); font-size: 15px; font-weight: 600; list-style: none; }
   summary::-webkit-details-marker { display: none; }
@@ -63,8 +68,13 @@
   .done { display: none; text-align: center; }
   .done .big { font-size: 40px; }
   .done a.go { display: block; margin: 14px 0 8px; padding: 14px; border-radius: 12px; background: var(--accent); color: var(--accent-ink); text-decoration: none; font-weight: 700; }
-  .done ol { text-align: right; color: var(--muted); padding-inline-start: 20px; }
+  .done ol { text-align: start; color: var(--muted); padding-inline-start: 20px; }
   .blocked { display: none; }
+  .note { background: var(--warn); color: var(--warn-ink); border-radius: 10px; padding: 8px 12px; margin-bottom: 14px; font-size: 14px; }
+  .copy { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+  .copy code { flex: 1; min-width: 0; overflow-wrap: anywhere; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px; font-size: 13px; text-align: left; }
+  .copy button { width: auto; padding: 8px 12px; font-size: 14px; }
+  .preview { white-space: pre-line; line-height: 1.9; margin-bottom: 10px; }
   .place { position: relative; }
   .place-list { position: absolute; z-index: 5; top: 100%; inset-inline: 0; margin: 4px 0 0; padding: 4px; list-style: none;
     background: var(--card); border: 1px solid var(--line); border-radius: 10px; max-height: 280px; overflow-y: auto; box-shadow: 0 6px 20px rgba(0,0,0,.15); }
@@ -73,13 +83,6 @@
   .place-list .pc { font-weight: 700; direction: ltr; min-width: 34px; }
   .place-list .pn { min-width: 0; }
   .place-list .ps { display: block; color: var(--muted); font-size: 12px; }
-  @media (max-width: 380px) { .place-list { inset-inline: 0; } }
-  .testbar { background: #fff4d6; color: #6b4e00; border-radius: 10px; padding: 8px 12px; margin-bottom: 14px; font-size: 14px; }
-  @media (prefers-color-scheme: dark) { .testbar { background: #3a2f12; color: #f3d48b; } }
-  .preview { white-space: pre-line; line-height: 1.9; margin-bottom: 10px; }
-  .copy { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
-  .copy code { flex: 1; min-width: 0; overflow-wrap: anywhere; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px; font-size: 13px; text-align: left; }
-  .copy button { width: auto; padding: 8px 12px; font-size: 14px; }
   .foot { color: var(--muted); font-size: 13px; margin-top: 16px; }
   [hidden] { display: none !important; }
   @media (max-width: 380px) { .row { grid-template-columns: 1fr; } }
@@ -87,157 +90,153 @@
 </head>
 <body>
 <main>
+  <div class="top"><button type="button" class="lang" id="langBtn">English</button></div>
   <header>
-    <h1>✈️ בוט מחירי טיסות</h1>
-    <p class="lead">ממלאים איזו טיסה מחפשים, והבוט בטלגרם בודק מחירים כל כמה שעות ושולח התראה כשהמחיר יורד מתחת לסף שבחרתם.</p>
+    <h1 data-t="title"></h1>
+    <p class="lead" data-t="lead"></p>
   </header>
 
   <section class="card blocked" id="noInvite">
-    <h2>🔒 צריך קישור הזמנה</h2>
-    <p>ההרשמה פתוחה רק דרך קישור הזמנה. בקשו את הקישור ממי ששיתף איתכם את הבוט.</p>
+    <h2 data-t="noInviteTitle"></h2>
+    <p data-t="noInviteText"></p>
   </section>
 
-  <div class="testbar" id="testBar" hidden>🧪 מצב בדיקה: אחרי "אישרתי" יוצג סיכום בלבד, בלי לשלוח כלום לבוט.</div>
+  <div class="note" id="testBar" hidden data-t="testBar"></div>
+  <div class="note" id="editBar" hidden data-t="editBar"></div>
+
   <form id="form" novalidate>
     <section class="card">
-      <h2><span class="n">1</span> מסלול ונוסעים</h2>
-      <div class="seg" role="radiogroup" aria-label="סוג טיסה">
-        <input type="radio" name="trip" id="tripRt" value="rt" checked><label for="tripRt">הלוך-חזור</label>
-        <input type="radio" name="trip" id="tripOw" value="ow"><label for="tripOw">כיוון אחד</label>
+      <h2><span class="n">1</span> <span data-t="secRoute"></span></h2>
+      <div class="seg" role="radiogroup">
+        <input type="radio" name="trip" id="tripRt" value="rt" checked><label for="tripRt" data-t="roundTrip"></label>
+        <input type="radio" name="trip" id="tripOw" value="ow"><label for="tripOw" data-t="oneWay"></label>
       </div>
       <div class="row">
-        <div class="field place"><label for="originQ">מוצא</label>
-          <input id="originQ" class="place-q" data-target="origin" autocomplete="off" placeholder="עיר, שדה או קוד" role="combobox" aria-expanded="false" aria-controls="originList">
+        <div class="field place"><label for="originQ" data-t="origin"></label>
+          <input id="originQ" class="place-q" data-target="origin" autocomplete="off" data-tp="placePh" role="combobox" aria-expanded="false" aria-controls="originList">
           <input type="hidden" id="origin" value="TLV"><ul class="place-list" id="originList" role="listbox" hidden></ul></div>
-        <div class="field place"><label for="destinationQ">יעד</label>
-          <input id="destinationQ" class="place-q" data-target="destination" autocomplete="off" placeholder="עיר, שדה או קוד" role="combobox" aria-expanded="false" aria-controls="destinationList">
+        <div class="field place"><label for="destinationQ" data-t="destination"></label>
+          <input id="destinationQ" class="place-q" data-target="destination" autocomplete="off" data-tp="placePh" role="combobox" aria-expanded="false" aria-controls="destinationList">
           <input type="hidden" id="destination" value=""><ul class="place-list" id="destinationList" role="listbox" hidden></ul></div>
       </div>
-      <p class="hint">אפשר לחפש בעברית או באנגלית: עיר, שם שדה, מדינה או קוד (למשל לונדון, Zanzibar, יוון, BKK). יותר מ-4,000 שדות בכל העולם.</p>
+      <p class="hint" data-t="placeHint"></p>
       <div class="row3">
-        <div class="field"><label for="adults">מבוגרים</label><select id="adults"></select></div>
-        <div class="field"><label for="children">ילדים (2–11)</label><select id="children"></select></div>
-        <div class="field"><label for="infants">תינוקות</label><select id="infants"></select></div>
+        <div class="field"><label for="adults" data-t="adults"></label><select id="adults"></select></div>
+        <div class="field"><label for="children" data-t="children"></label><select id="children"></select></div>
+        <div class="field"><label for="infants" data-t="infants"></label><select id="infants"></select></div>
       </div>
-      <div class="field">
-        <label for="cabin">מחלקה</label>
-        <select id="cabin"><option value="economy" selected>תיירים (Economy)</option><option value="premium">פרימיום (Premium Economy)</option><option value="business">עסקים (Business)</option><option value="first">ראשונה (First)</option></select>
-      </div>
+      <div class="field"><label for="cabin" data-t="cabin"></label><select id="cabin" data-opts="cabins"></select></div>
       <div class="row">
-        <div class="field"><label for="checkedBags">מזוודות לנוסע</label>
-          <select id="checkedBags"><option value="0">בלי מזוודה</option><option value="1" selected>מזוודה 1</option><option value="2">2 מזוודות</option></select></div>
-        <div class="field"><label for="carryOn">תיק עלייה לנוסע</label>
-          <select id="carryOn"><option value="1" selected>כן</option><option value="0">לא צריך</option></select></div>
+        <div class="field"><label for="checkedBags" data-t="checkedBags"></label><select id="checkedBags" data-opts="bags"></select></div>
+        <div class="field"><label for="carryOn" data-t="carryOn"></label><select id="carryOn" data-opts="yesNo"></select></div>
       </div>
-      <p class="hint">הבוט מתריע רק על מחירים שהכבודה הזו כלולה בהם.</p>
+      <p class="hint" data-t="bagsHint"></p>
     </section>
 
     <section class="card">
-      <h2><span class="n">2</span> הלוך</h2>
-      <div class="seg seg-sm" role="radiogroup" aria-label="סוג תאריך">
-        <input type="radio" name="outMode" id="outFlex" value="flex" checked><label for="outFlex">תאריך גמיש</label>
-        <input type="radio" name="outMode" id="outRange" value="range"><label for="outRange">טווח תאריכים</label>
+      <h2><span class="n">2</span> <span data-t="secOut"></span></h2>
+      <div class="seg seg-sm" role="radiogroup">
+        <input type="radio" name="outMode" id="outFlex" value="flex" checked><label for="outFlex" data-t="flexDate"></label>
+        <input type="radio" name="outMode" id="outRange" value="range"><label for="outRange" data-t="dateRange"></label>
       </div>
       <div class="row" id="outFlexBox">
-        <div class="field"><label for="outDate">בערך בתאריך</label><input type="date" id="outDate"></div>
-        <div class="field"><label for="outFlexibility">גמישות</label>
-          <select id="outFlexibility"><option value="0">בדיוק בתאריך הזה</option><option value="1">±1 יום</option><option value="3" selected>±3 ימים</option><option value="5">±5 ימים</option></select></div>
+        <div class="field"><label for="outDate" data-t="aboutDate"></label><input type="date" id="outDate"></div>
+        <div class="field"><label for="outFlexibility" data-t="flexibility"></label><select id="outFlexibility" data-opts="flex"></select></div>
       </div>
       <div class="row" id="outRangeBox" hidden>
-        <div class="field"><label for="outFrom">מתאריך</label><input type="date" id="outFrom"></div>
-        <div class="field"><label for="outTo">עד תאריך</label><input type="date" id="outTo"></div>
+        <div class="field"><label for="outFrom" data-t="fromDate"></label><input type="date" id="outFrom"></div>
+        <div class="field"><label for="outTo" data-t="toDate"></label><input type="date" id="outTo"></div>
       </div>
-      <div class="field"><label for="outMaxStops">עצירות</label><select id="outMaxStops" class="stops-select" data-default="0"></select></div>
+      <div class="field"><label for="outMaxStops" data-t="stops"></label><select id="outMaxStops" data-opts="stops" data-default="0"></select></div>
       <details>
-        <summary>מסננים מתקדמים להלוך</summary>
+        <summary data-t="advOut"></summary>
         <div>
-          <div class="field"><label for="airline">חברת תעופה</label><select id="airline" class="airline-select"></select></div>
-          <div class="field" hidden><label for="airlineOther">קוד החברה (2 תווים)</label><input id="airlineOther" class="code" maxlength="2" placeholder="למשל BA"></div>
-          <div class="field"><label for="outMaxHours">משך הטיסה, עד (שעות)</label><input type="number" id="outMaxHours" min="0" max="63" value="0" inputmode="numeric"></div>
-          <p class="hint">0 = בלי הגבלה.</p>
+          <div class="field"><label for="airline" data-t="airline"></label><select id="airline" class="airline-select" data-opts="airlines"></select></div>
+          <div class="field" hidden><label for="airlineOther" data-t="airlineCode"></label><input id="airlineOther" class="code" maxlength="2" placeholder="BA"></div>
+          <div class="field"><label for="outMaxHours" data-t="maxHours"></label><input type="number" id="outMaxHours" min="0" max="63" value="0" inputmode="numeric"></div>
+          <p class="hint" data-t="zeroNoLimit"></p>
           <div class="row">
-            <div class="field"><label for="outDepFrom">המראה משעה</label><select id="outDepFrom" class="hour-from"></select></div>
-            <div class="field"><label for="outDepTo">עד שעה</label><select id="outDepTo" class="hour-to"></select></div>
+            <div class="field"><label for="outDepFrom" data-t="depFrom"></label><select id="outDepFrom" class="hour-from"></select></div>
+            <div class="field"><label for="outDepTo" data-t="depTo"></label><select id="outDepTo" class="hour-to"></select></div>
           </div>
         </div>
       </details>
     </section>
 
     <section class="card" id="retCard">
-      <h2><span class="n">3</span> חזור</h2>
-      <div class="seg seg-sm" role="radiogroup" aria-label="סוג תאריך">
-        <input type="radio" name="retMode" id="retFlex" value="flex" checked><label for="retFlex">תאריך גמיש</label>
-        <input type="radio" name="retMode" id="retRange" value="range"><label for="retRange">טווח תאריכים</label>
+      <h2><span class="n">3</span> <span data-t="secRet"></span></h2>
+      <div class="seg seg-sm" role="radiogroup">
+        <input type="radio" name="retMode" id="retFlex" value="flex" checked><label for="retFlex" data-t="flexDate"></label>
+        <input type="radio" name="retMode" id="retRange" value="range"><label for="retRange" data-t="dateRange"></label>
       </div>
       <div class="row" id="retFlexBox">
-        <div class="field"><label for="retDate">בערך בתאריך</label><input type="date" id="retDate"></div>
-        <div class="field"><label for="retFlexibility">גמישות</label>
-          <select id="retFlexibility"><option value="0">בדיוק בתאריך הזה</option><option value="1">±1 יום</option><option value="3" selected>±3 ימים</option><option value="5">±5 ימים</option></select></div>
+        <div class="field"><label for="retDate" data-t="aboutDate"></label><input type="date" id="retDate"></div>
+        <div class="field"><label for="retFlexibility" data-t="flexibility"></label><select id="retFlexibility" data-opts="flex"></select></div>
       </div>
       <div class="row" id="retRangeBox" hidden>
-        <div class="field"><label for="retFrom">מתאריך</label><input type="date" id="retFrom"></div>
-        <div class="field"><label for="retTo">עד תאריך</label><input type="date" id="retTo"></div>
+        <div class="field"><label for="retFrom" data-t="fromDate"></label><input type="date" id="retFrom"></div>
+        <div class="field"><label for="retTo" data-t="toDate"></label><input type="date" id="retTo"></div>
       </div>
-      <div class="field"><label for="retMaxStops">עצירות</label><select id="retMaxStops" class="stops-select" data-default="1"></select></div>
+      <div class="field"><label for="retMaxStops" data-t="stops"></label><select id="retMaxStops" data-opts="stops" data-default="1"></select></div>
       <div class="row">
-        <div class="field"><label for="retMaxHours">משך החזור, עד (שעות)</label><input type="number" id="retMaxHours" min="0" max="63" value="25" inputmode="numeric"></div>
-        <div class="field"><label for="maxTripDays">אורך הטיול, עד (ימים)</label><input type="number" id="maxTripDays" min="0" max="127" value="0" inputmode="numeric"></div>
+        <div class="field"><label for="retMaxHours" data-t="retMaxHours"></label><input type="number" id="retMaxHours" min="0" max="63" value="25" inputmode="numeric"></div>
+        <div class="field"><label for="maxTripDays" data-t="maxTripDays"></label><input type="number" id="maxTripDays" min="0" max="127" value="0" inputmode="numeric"></div>
       </div>
-      <p class="hint">0 = בלי הגבלה.</p>
+      <p class="hint" data-t="zeroNoLimit"></p>
       <details>
-        <summary>מסננים מתקדמים לחזור</summary>
+        <summary data-t="advRet"></summary>
         <div>
-          <div class="field"><label for="retAirline">חברת תעופה</label><select id="retAirline" class="airline-select"></select></div>
-          <div class="field" hidden><label for="retAirlineOther">קוד החברה (2 תווים)</label><input id="retAirlineOther" class="code" maxlength="2" placeholder="למשל BA"></div>
+          <div class="field"><label for="retAirline" data-t="airline"></label><select id="retAirline" class="airline-select" data-opts="airlines"></select></div>
+          <div class="field" hidden><label for="retAirlineOther" data-t="airlineCode"></label><input id="retAirlineOther" class="code" maxlength="2" placeholder="BA"></div>
           <div class="row">
-            <div class="field"><label for="retDepFrom">המראה משעה</label><select id="retDepFrom" class="hour-from"></select></div>
-            <div class="field"><label for="retDepTo">עד שעה</label><select id="retDepTo" class="hour-to"></select></div>
+            <div class="field"><label for="retDepFrom" data-t="depFrom"></label><select id="retDepFrom" class="hour-from"></select></div>
+            <div class="field"><label for="retDepTo" data-t="depTo"></label><select id="retDepTo" class="hour-to"></select></div>
           </div>
         </div>
       </details>
     </section>
 
     <section class="card">
-      <h2><span class="n" id="lastNum">4</span> מחיר והתראות</h2>
+      <h2><span class="n" id="lastNum">4</span> <span data-t="secPrice"></span></h2>
       <div class="field">
-        <label for="maxPrice" id="priceLabel">שלחו לי התראה כשהמחיר יורד מתחת ל-</label>
+        <label for="maxPrice" id="priceLabel"></label>
         <div class="usd"><input type="number" id="maxPrice" min="20" max="32767" placeholder="1000" inputmode="numeric"><span>$</span></div>
       </div>
       <p class="hint" id="ilsHint"></p>
       <details>
-        <summary>מסננים מתקדמים: עצירות ביניים וכרטיסים נפרדים</summary>
+        <summary data-t="advPrice"></summary>
         <div>
-          <div class="field"><label for="maxLayover">עצירת ביניים ארוכה ביותר (שעות)</label><input type="number" id="maxLayover" min="0" max="31" value="0" inputmode="numeric"></div>
-          <p class="hint">0 = בלי הגבלה.</p>
-          <label class="check"><input type="checkbox" id="selfTransfer"> לאפשר כרטיסים נפרדים עם העברה עצמית (זול יותר, אבל לא מוגן אם טיסה מתעכבת)</label>
+          <div class="field"><label for="maxLayover" data-t="maxLayover"></label><input type="number" id="maxLayover" min="0" max="31" value="0" inputmode="numeric"></div>
+          <p class="hint" data-t="zeroNoLimit"></p>
+          <label class="check"><input type="checkbox" id="selfTransfer"> <span data-t="selfTransfer"></span></label>
         </div>
       </details>
     </section>
 
     <div class="errors" id="errors" role="alert"></div>
-    <button type="submit">אישרתי, להמשיך לטלגרם</button>
-    <p class="foot">הפרטים נשלחים רק לבוט בטלגרם ונשמרים אצלו מוצפנים. מי ששיתף איתכם את הבוט רואה את פרטי החיפוש שלכם (מסלול, תאריכים וסף מחיר). אפשר להפסיק בכל רגע עם הפקודה &#x2066;/stop&#x2069; בבוט.</p>
+    <button type="submit" id="submitBtn"></button>
+    <p class="foot" data-t="privacy"></p>
   </form>
 
   <section class="card" id="preview" hidden>
-    <h2>🧪 מצב בדיקה: זה מה שהבוט היה מקבל</h2>
+    <h2 data-t="previewTitle"></h2>
     <div id="previewText" class="preview"></div>
-    <p class="hint">שום דבר לא נשלח לבוט, וההרשמה הקיימת לא השתנתה.</p>
-    <p class="foot">קוד ההרשמה: <code id="previewCode" dir="ltr"></code> · <a href="#" id="previewBack">חזרה לטופס</a></p>
+    <p class="hint" data-t="previewNote"></p>
+    <p class="foot"><span data-t="code"></span> <code id="previewCode" dir="ltr"></code> · <a href="#" id="previewBack" data-t="backToForm"></a></p>
   </section>
 
   <section class="card done" id="done">
     <div class="big">✅</div>
-    <h2 style="justify-content:center">כמעט סיימנו</h2>
-    <a class="go" id="tgLink" href="#" rel="noopener">פתיחת הבוט בטלגרם</a>
+    <h2 style="justify-content:center" data-t="almostDone"></h2>
+    <a class="go" id="tgLink" href="#" rel="noopener" data-t="openBot"></a>
     <ol>
-      <li>בטלגרם, לחצו על <b>Start / התחל</b> למטה.</li>
-      <li>לא מופיע כפתור Start? העתיקו את ההודעה הזו ושלחו אותה לבוט:
-        <div class="copy"><code id="startMsg" dir="ltr"></code><button type="button" id="copyBtn">העתקה</button></div></li>
-      <li>תוך כמה דקות הבוט יאשר את ההרשמה ויציג את הפרטים.</li>
-      <li>החיפוש הראשון ישלח תוצאות תוך כ-10–20 דקות.</li>
+      <li data-t="step1" data-html="1"></li>
+      <li><span data-t="step2"></span>
+        <div class="copy"><code id="startMsg" dir="ltr"></code><button type="button" id="copyBtn" data-t="copy"></button></div></li>
+      <li data-t="step3"></li>
+      <li data-t="step4"></li>
     </ol>
-    <p class="foot">רוצים לשנות משהו? <a href="#" id="back">חזרה לטופס</a></p>
+    <p class="foot"><span data-t="wantChange"></span> <a href="#" id="back" data-t="backToForm"></a></p>
   </section>
 </main>
 
@@ -248,35 +247,130 @@
   var BOT = 'Ffffffflightticketbot';
   var ILS_PER_USD = 3.2; // rough, for the hint only; the bot uses the day's real rate
   var $ = function (id) { return document.getElementById(id); };
-  var params = new URLSearchParams(location.search);
-  var invite = (params.get('i') || '').trim();
-  var TEST = params.get('test') === '1';
-  try { if (invite) localStorage.setItem('fw-invite', invite); else invite = localStorage.getItem('fw-invite') || ''; } catch (e) {}
-  if (!/^[A-Za-z0-9_-]{6}$/.test(invite)) { $('noInvite').style.display = 'block'; $('form').hidden = true; return; }
 
-  // Fill the select boxes.
-  function opts(sel, items, def) { items.forEach(function (it) { var o = document.createElement('option'); o.value = it[0]; o.textContent = it[1]; if (String(it[0]) === String(def)) o.selected = true; sel.appendChild(o); }); }
-  function nums(a, b) { var r = []; for (var i = a; i <= b; i++) r.push([i, String(i)]); return r; }
-  opts($('adults'), nums(1, 9), 1); opts($('children'), nums(0, 8), 0); opts($('infants'), nums(0, 4), 0);
-  var AIRLINES = [['', 'כל חברה'], ['LY', 'אל על'], ['6H', 'ישראייר'], ['IZ', 'ארקיע'], ['other', 'אחרת (קוד)...']];
-  document.querySelectorAll('.airline-select').forEach(function (s) {
-    opts(s, AIRLINES, '');
-    s.addEventListener('change', function () { $(s.id === 'airline' ? 'airlineOther' : 'retAirlineOther').parentNode.hidden = s.value !== 'other'; });
+  // ---------- texts ----------
+  var T = {
+    he: {
+      title: '✈️ בוט מחירי טיסות', lead: 'ממלאים איזו טיסה מחפשים, והבוט בטלגרם בודק מחירים כל כמה שעות ושולח התראה כשהמחיר יורד מתחת לסף שבחרתם.',
+      noInviteTitle: '🔒 צריך קישור הזמנה', noInviteText: 'ההרשמה פתוחה רק דרך קישור הזמנה. בקשו את הקישור ממי ששיתף איתכם את הבוט.',
+      testBar: '🧪 מצב בדיקה: אחרי "אישרתי" יוצג סיכום בלבד, בלי לשלוח כלום לבוט.',
+      editBar: '✏️ עדכון הגדרות: הטופס מולא בהגדרות הנוכחיות שלכם. משנים מה שרוצים ושומרים, וההגדרות החדשות יחליפו את הקודמות.',
+      secRoute: 'מסלול ונוסעים', roundTrip: 'הלוך-חזור', oneWay: 'כיוון אחד', origin: 'מוצא', destination: 'יעד', placePh: 'עיר, שדה או קוד',
+      placeHint: 'אפשר לחפש בעברית או באנגלית: עיר, שם שדה, מדינה או קוד (למשל לונדון, Zanzibar, יוון, BKK). יותר מ-4,000 שדות בכל העולם.',
+      adults: 'מבוגרים', children: 'ילדים (2–11)', infants: 'תינוקות', cabin: 'מחלקה', checkedBags: 'מזוודות לנוסע', carryOn: 'תיק עלייה לנוסע',
+      bagsHint: 'הבוט מתריע על מחירים שהכבודה הזו כלולה בהם (מחיר שלא ידוע אם היא כלולה מסומן ב-*).',
+      secOut: 'הלוך', secRet: 'חזור', flexDate: 'תאריך גמיש', dateRange: 'טווח תאריכים', aboutDate: 'בערך בתאריך', flexibility: 'גמישות',
+      fromDate: 'מתאריך', toDate: 'עד תאריך', stops: 'עצירות', advOut: 'מסננים מתקדמים להלוך', advRet: 'מסננים מתקדמים לחזור',
+      airline: 'חברת תעופה', airlineCode: 'קוד החברה (2 תווים)', maxHours: 'משך הטיסה, עד (שעות)', retMaxHours: 'משך החזור, עד (שעות)',
+      maxTripDays: 'אורך הטיול, עד (ימים)', zeroNoLimit: '0 = בלי הגבלה.', depFrom: 'המראה משעה', depTo: 'עד שעה',
+      secPrice: 'מחיר והתראות', priceLabel: 'שלחו לי התראה כשהמחיר יורד מתחת ל-', priceLabelPax: 'שלחו לי התראה כשהמחיר לנוסע יורד מתחת ל-',
+      ilsHint: 'בערך ₪{a}{b} לפי שער משוער', perPax: ' לנוסע', advPrice: 'מסננים מתקדמים: עצירות ביניים וכרטיסים נפרדים',
+      maxLayover: 'עצירת ביניים ארוכה ביותר (שעות)', selfTransfer: 'לאפשר כרטיסים נפרדים עם העברה עצמית (זול יותר, אבל לא מוגן אם טיסה מתעכבת)',
+      submit: 'אישרתי, להמשיך לטלגרם', submitEdit: 'שמירת השינויים בטלגרם', fix: 'צריך לתקן:',
+      privacy: 'הפרטים נשלחים רק לבוט בטלגרם ונשמרים אצלו מוצפנים. מי ששיתף איתכם את הבוט רואה את פרטי החיפוש שלכם (מסלול, תאריכים וסף מחיר). אפשר להפסיק בכל רגע עם הפקודה ⁦/stop⁩ בבוט.',
+      previewTitle: '🧪 מצב בדיקה: זה מה שהבוט היה מקבל', previewNote: 'שום דבר לא נשלח לבוט, וההרשמה הקיימת לא השתנתה.', code: 'קוד:', backToForm: 'חזרה לטופס',
+      almostDone: 'כמעט סיימנו', openBot: 'פתיחת הבוט בטלגרם', step1: 'בטלגרם, לחצו על <b>Start / התחל</b> למטה.',
+      step2: 'לא מופיע כפתור Start? העתיקו את ההודעה הזו ושלחו אותה לבוט:', copy: 'העתקה', copied: 'הועתק ✓',
+      step3: 'תוך כמה דקות הבוט יאשר ויציג את הפרטים.', step4: 'החיפוש הראשון ישלח תוצאות תוך כ-10–20 דקות.', wantChange: 'רוצים לשנות משהו?',
+      opts: {
+        cabins: [['economy', 'תיירים (Economy)'], ['premium', 'פרימיום (Premium Economy)'], ['business', 'עסקים (Business)'], ['first', 'ראשונה (First)']],
+        bags: [['0', 'בלי מזוודה'], ['1', 'מזוודה 1'], ['2', '2 מזוודות']], yesNo: [['1', 'כן'], ['0', 'לא צריך']],
+        flex: [['0', 'בדיוק בתאריך הזה'], ['1', '±1 יום'], ['3', '±3 ימים'], ['5', '±5 ימים']],
+        stops: [['0', 'ישיר בלבד'], ['1', 'עד עצירה אחת'], ['2', 'עד 2 עצירות'], ['3', 'לא משנה']],
+        airlines: [['', 'כל חברה'], ['LY', 'אל על'], ['6H', 'ישראייר'], ['IZ', 'ארקיע'], ['other', 'אחרת (קוד)...']],
+      },
+    },
+    en: {
+      title: '✈️ Flight price bot', lead: 'Tell us which flight you are looking for. The Telegram bot checks prices every few hours and alerts you when the price drops below your limit.',
+      noInviteTitle: '🔒 Invite link needed', noInviteText: 'Sign-up is by invite link only. Ask the person who shared the bot with you for the link.',
+      testBar: '🧪 Test mode: after "Confirm" you only see a summary; nothing is sent to the bot.',
+      editBar: '✏️ Update settings: the form is filled with your current settings. Change what you want and save; the new settings replace the old ones.',
+      secRoute: 'Route and passengers', roundTrip: 'Round trip', oneWay: 'One way', origin: 'From', destination: 'To', placePh: 'City, airport or code',
+      placeHint: 'Search in English or Hebrew: city, airport, country or code (e.g. London, Zanzibar, Greece, BKK). Over 4,000 airports worldwide.',
+      adults: 'Adults', children: 'Children (2–11)', infants: 'Infants', cabin: 'Cabin', checkedBags: 'Checked bags per passenger', carryOn: 'Carry-on per passenger',
+      bagsHint: 'The bot alerts on prices that include these bags (a price where it is unknown is marked with *).',
+      secOut: 'Outbound', secRet: 'Return', flexDate: 'Flexible date', dateRange: 'Date range', aboutDate: 'Around', flexibility: 'Flexibility',
+      fromDate: 'From', toDate: 'To', stops: 'Stops', advOut: 'Advanced filters (outbound)', advRet: 'Advanced filters (return)',
+      airline: 'Airline', airlineCode: 'Airline code (2 characters)', maxHours: 'Flight time, up to (hours)', retMaxHours: 'Return flight time, up to (hours)',
+      maxTripDays: 'Trip length, up to (days)', zeroNoLimit: '0 = no limit.', depFrom: 'Departs from', depTo: 'Until',
+      secPrice: 'Price and alerts', priceLabel: 'Alert me when the price drops below', priceLabelPax: 'Alert me when the price per passenger drops below',
+      ilsHint: 'About ₪{a}{b} at a rough rate', perPax: ' per passenger', advPrice: 'Advanced filters: layovers and separate tickets',
+      maxLayover: 'Longest layover (hours)', selfTransfer: 'Allow separate tickets with self-transfer (cheaper, but not protected if a flight is late)',
+      submit: 'Confirm and continue in Telegram', submitEdit: 'Save changes in Telegram', fix: 'Please fix:',
+      privacy: 'Your details go only to the Telegram bot and are stored encrypted. The person who shared the bot with you can see your search (route, dates and price limit). You can stop any time with /stop in the bot.',
+      previewTitle: '🧪 Test mode: this is what the bot would receive', previewNote: 'Nothing was sent to the bot, and the existing sign-up did not change.', code: 'Code:', backToForm: 'Back to the form',
+      almostDone: 'Almost done', openBot: 'Open the bot in Telegram', step1: 'In Telegram, tap <b>Start</b> at the bottom.',
+      step2: 'No Start button? Copy this message and send it to the bot:', copy: 'Copy', copied: 'Copied ✓',
+      step3: 'Within a few minutes the bot confirms and shows your settings.', step4: 'The first search sends results within about 10–20 minutes.', wantChange: 'Want to change something?',
+      opts: {
+        cabins: [['economy', 'Economy'], ['premium', 'Premium economy'], ['business', 'Business'], ['first', 'First']],
+        bags: [['0', 'No checked bag'], ['1', '1 checked bag'], ['2', '2 checked bags']], yesNo: [['1', 'Yes'], ['0', 'Not needed']],
+        flex: [['0', 'Exactly this date'], ['1', '±1 day'], ['3', '±3 days'], ['5', '±5 days']],
+        stops: [['0', 'Nonstop only'], ['1', 'Up to 1 stop'], ['2', 'Up to 2 stops'], ['3', 'Any']],
+        airlines: [['', 'Any airline'], ['LY', 'El Al'], ['6H', 'Israir'], ['IZ', 'Arkia'], ['other', 'Other (code)...']],
+      },
+    },
+  };
+
+  var params = new URLSearchParams(location.search);
+  var TEST = params.get('test') === '1';
+  // Editing: ?p=<current code> fills the form with the user's settings (it also carries the invite code).
+  var EDIT = null;
+  try { if (params.get('p')) EDIT = FlightCodec.decode(params.get('p')); } catch (e) { EDIT = null; }
+  var invite = (EDIT && EDIT.invite) || (params.get('i') || '').trim();
+  try { if (invite) localStorage.setItem('fw-invite', invite); else invite = localStorage.getItem('fw-invite') || ''; } catch (e) {}
+  var lang = params.get('lang') || (EDIT && EDIT.lang) || (function () { try { return localStorage.getItem('fw-lang'); } catch (e) { return null; } }()) || 'he';
+  if (!T[lang]) lang = 'he';
+  var t = function (k) { return T[lang][k]; };
+
+  // ---------- select options ----------
+  function fill(sel, items, keep) {
+    var cur = keep ? sel.value : null; sel.innerHTML = '';
+    items.forEach(function (it) { var o = document.createElement('option'); o.value = it[0]; o.textContent = it[1]; sel.appendChild(o); });
+    if (cur !== null && cur !== '') sel.value = cur;
+  }
+  function nums(a, b) { var r = []; for (var i = a; i <= b; i++) r.push([String(i), String(i)]); return r; }
+  fill($('adults'), nums(1, 9)); fill($('children'), nums(0, 8)); fill($('infants'), nums(0, 4));
+  var hours = []; for (var h = 0; h <= 24; h++) hours.push([String(h), (h < 10 ? '0' : '') + h + ':00']);
+  document.querySelectorAll('.hour-from').forEach(function (s) { fill(s, hours.slice(0, 24)); s.value = '0'; });
+  document.querySelectorAll('.hour-to').forEach(function (s) { fill(s, hours.slice(1)); s.value = '24'; });
+  var DEFAULTS = { cabin: 'economy', checkedBags: '1', carryOn: '1', outFlexibility: '3', retFlexibility: '3', outMaxStops: '0', retMaxStops: '1', airline: '', retAirline: '' };
+
+  // ---------- apply language ----------
+  function applyLang(first) {
+    document.documentElement.lang = lang; document.documentElement.dir = lang === 'he' ? 'rtl' : 'ltr';
+    document.title = t('title').replace('✈️ ', '');
+    document.querySelectorAll('[data-t]').forEach(function (el) { var v = t(el.dataset.t); if (v == null) return; if (el.dataset.html) el.innerHTML = v; else el.textContent = v; });
+    document.querySelectorAll('[data-tp]').forEach(function (el) { el.placeholder = t(el.dataset.tp); });
+    document.querySelectorAll('select[data-opts]').forEach(function (s) {
+      fill(s, T[lang].opts[s.dataset.opts], !first);
+      if (first) s.value = DEFAULTS[s.id] != null ? DEFAULTS[s.id] : (s.dataset.default || s.options[0].value);
+    });
+    $('langBtn').textContent = lang === 'he' ? 'English' : 'עברית';
+    $('submitBtn').textContent = EDIT ? t('submitEdit') : t('submit');
+    syncPrice(); refreshPlaces();
+  }
+  $('langBtn').addEventListener('click', function () {
+    lang = lang === 'he' ? 'en' : 'he';
+    try { localStorage.setItem('fw-lang', lang); } catch (e) {}
+    applyLang(false);
   });
-  document.querySelectorAll('.stops-select').forEach(function (s) { opts(s, [[0, 'ישיר בלבד'], [1, 'עד עצירה אחת'], [2, 'עד 2 עצירות'], [3, 'לא משנה']], s.dataset.default); });
-  var hours = []; for (var h = 0; h <= 24; h++) hours.push([h, (h < 10 ? '0' : '') + h + ':00']);
-  document.querySelectorAll('.hour-from').forEach(function (s) { opts(s, hours.slice(0, 24), 0); });
-  document.querySelectorAll('.hour-to').forEach(function (s) { opts(s, hours.slice(1), 24); });
+
+  if (!/^[A-Za-z0-9_-]{6}$/.test(invite)) { applyLang(true); $('noInvite').style.display = 'block'; $('form').hidden = true; return; }
+  if (TEST) $('testBar').hidden = false;
+  if (EDIT) $('editBar').hidden = false;
 
   var iso = function (d) { return new Date(d.getTime() - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10); };
   var todayIso = iso(new Date());
-  if (TEST) $('testBar').hidden = false;
   ['outFrom', 'outTo', 'retFrom', 'retTo', 'outDate', 'retDate'].forEach(function (id) { $(id).min = todayIso; });
+  function addDays(isoDate, n) { var d = new Date(isoDate + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+  function daysBetween(a, b) { return Math.round((Date.parse(b) - Date.parse(a)) / 864e5); }
+
   ['out', 'ret'].forEach(function (k) {
     function sync() { var flex = $(k + 'Flex').checked; $(k + 'FlexBox').hidden = !flex; $(k + 'RangeBox').hidden = flex; }
     $(k + 'Flex').addEventListener('change', sync); $(k + 'Range').addEventListener('change', sync); sync();
+    $(k + 'From').addEventListener('change', function () { if (!$(k + 'To').value || $(k + 'To').value < $(k + 'From').value) $(k + 'To').value = $(k + 'From').value; });
   });
-  function addDays(isoDate, n) { var d = new Date(isoDate + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
   // Flexible date -> from/to range (the search covers every day in it).
   function datesOf(k) {
     if ($(k + 'Range').checked) return [$(k + 'From').value, $(k + 'To').value];
@@ -290,28 +384,31 @@
   function pax() { return Number($('adults').value) + Number($('children').value) + Number($('infants').value); }
   function syncTrip() { $('retCard').hidden = oneWay(); $('lastNum').textContent = oneWay() ? '3' : '4'; }
   function syncPrice() {
-    $('priceLabel').textContent = 'שלחו לי התראה כשהמחיר ' + (pax() > 1 ? 'לנוסע ' : '') + 'יורד מתחת ל-';
+    $('priceLabel').textContent = pax() > 1 ? t('priceLabelPax') : t('priceLabel');
     var v = Number($('maxPrice').value);
-    $('ilsHint').textContent = v ? 'בערך ₪' + Math.round(v * ILS_PER_USD).toLocaleString('he-IL') + (pax() > 1 ? ' לנוסע' : '') + ' לפי שער משוער' : '';
+    $('ilsHint').textContent = v ? t('ilsHint').replace('{a}', Math.round(v * ILS_PER_USD).toLocaleString('en-US')).replace('{b}', pax() > 1 ? t('perPax') : '') : '';
   }
-  $('tripRt').addEventListener('change', syncTrip); $('tripOw').addEventListener('change', syncTrip); syncTrip();
+  $('tripRt').addEventListener('change', syncTrip); $('tripOw').addEventListener('change', syncTrip);
   ['adults', 'children', 'infants'].forEach(function (id) { $(id).addEventListener('change', syncPrice); });
-  $('maxPrice').addEventListener('input', syncPrice); syncPrice();
-  $('outFrom').addEventListener('change', function () { if (!$('outTo').value || $('outTo').value < $('outFrom').value) $('outTo').value = $('outFrom').value; });
-  $('retFrom').addEventListener('change', function () { if (!$('retTo').value || $('retTo').value < $('retFrom').value) $('retTo').value = $('retFrom').value; });
-  // ---- Airport picker: search the full list (code, city, airport, country in Hebrew or English) ----
-  var PLACES = [];
-  var regionHe = (function () { try { var dn = new Intl.DisplayNames(['he'], { type: 'region' }); return function (c) { try { return dn.of(c) || ''; } catch (e) { return ''; } }; } catch (e) { return function () { return ''; }; } }());
-  var regionEn = (function () { try { var dn = new Intl.DisplayNames(['en'], { type: 'region' }); return function (c) { try { return dn.of(c) || ''; } catch (e) { return ''; } }; } catch (e) { return function () { return ''; }; } }());
-  function norm(t) { return (t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[׳'"`.,()-]/g, ' ').replace(/\s+/g, ' ').trim(); }
-  function labelOf(r) { return (r[5] || r[1] || r[2]) + ' · ' + r[0]; }
+  $('maxPrice').addEventListener('input', syncPrice);
+  document.querySelectorAll('.airline-select').forEach(function (s) {
+    s.addEventListener('change', function () { $(s.id === 'airline' ? 'airlineOther' : 'retAirlineOther').parentNode.hidden = s.value !== 'other'; });
+  });
+  ['airlineOther', 'retAirlineOther'].forEach(function (id) { $(id).addEventListener('input', function () { this.value = this.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); }); });
+
+  // ---------- airport picker ----------
+  var PLACES = []; var BY_CODE = {};
+  function region(code, l) { try { return new Intl.DisplayNames([l], { type: 'region' }).of(code) || code; } catch (e) { return code; } }
+  function norm(s) { return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[׳'"`.,()-]/g, ' ').replace(/\s+/g, ' ').trim(); }
+  function nameOf(r) { return lang === 'en' ? (r[1] || r[2]) : (r[5] || r[1] || r[2]); }
+  function labelOf(r) { return nameOf(r) + ' · ' + r[0]; }
   function search(q) {
     var nq = norm(q); if (!nq) return [];
     var up = q.trim().toUpperCase(); var out = [];
     for (var i = 0; i < PLACES.length; i++) {
       var r = PLACES[i]; var score = -1;
       if (r[0] === up) score = 0;
-      else if (r._he && r._he.indexOf(nq) === 0 || r._city.indexOf(nq) === 0) score = 1;
+      else if ((r._he && r._he.indexOf(nq) === 0) || r._city.indexOf(nq) === 0) score = 1;
       else if ((r._he && r._he.indexOf(nq) >= 0) || r._city.indexOf(nq) >= 0 || r._name.indexOf(nq) >= 0) score = 2;
       else if (r._ctry.indexOf(nq) === 0 || r._ctryEn.indexOf(nq) === 0) score = 3;
       if (score >= 0) out.push([score * 10 + r[4], r]);
@@ -319,18 +416,18 @@
     out.sort(function (a, b) { return a[0] - b[0]; });
     return out.slice(0, 40).map(function (x) { return x[1]; });
   }
-  function setupPicker(q) {
+  var pickers = [].map.call(document.querySelectorAll('.place-q'), function (q) {
     var hidden = $(q.dataset.target); var list = $(q.dataset.target + 'List'); var items = []; var active = -1;
     function close() { list.hidden = true; q.setAttribute('aria-expanded', 'false'); active = -1; }
     function choose(r) { hidden.value = r[0]; q.value = labelOf(r); close(); }
     function render() {
       items = search(q.value); list.innerHTML = '';
       if (!items.length) { close(); return; }
-      items.forEach(function (r, i) {
+      items.forEach(function (r) {
         var li = document.createElement('li'); li.setAttribute('role', 'option');
         var c = document.createElement('span'); c.className = 'pc'; c.textContent = r[0];
-        var n = document.createElement('span'); n.className = 'pn'; n.textContent = (r[5] || r[1] || r[2]);
-        var sub = document.createElement('span'); sub.className = 'ps'; sub.textContent = [r[2], regionHe(r[3]) || r[3]].filter(Boolean).join(' · ');
+        var n = document.createElement('span'); n.className = 'pn'; n.textContent = nameOf(r);
+        var sub = document.createElement('span'); sub.className = 'ps'; sub.textContent = [r[2], region(r[3], lang)].filter(Boolean).join(' · ');
         n.appendChild(sub); li.appendChild(c); li.appendChild(n);
         li.addEventListener('mousedown', function (e) { e.preventDefault(); choose(r); });
         list.appendChild(li);
@@ -341,7 +438,7 @@
     q.addEventListener('focus', function () { if (hidden.value) q.select(); });
     q.addEventListener('blur', function () {
       setTimeout(close, 100);
-      if (!hidden.value) { var up = q.value.trim().toUpperCase(); var m = PLACES.filter(function (r) { return r[0] === up; })[0] || (items.length === 1 ? items[0] : null); if (m) choose(m); }
+      if (!hidden.value) { var m = BY_CODE[q.value.trim().toUpperCase()] || (items.length === 1 ? items[0] : null); if (m) choose(m); }
     });
     q.addEventListener('keydown', function (e) {
       if (list.hidden) return;
@@ -351,61 +448,96 @@
         list.children[active].scrollIntoView({ block: 'nearest' });
       } else if (e.key === 'Enter') { e.preventDefault(); choose(items[active >= 0 ? active : 0]); } else if (e.key === 'Escape') close();
     });
-    return function () { var r = PLACES.filter(function (x) { return x[0] === hidden.value; })[0]; if (r) q.value = labelOf(r); };
-  }
-  var pickers = [].map.call(document.querySelectorAll('.place-q'), setupPicker);
+    return function () { var r = BY_CODE[hidden.value]; if (r) q.value = labelOf(r); else if (hidden.value) q.value = hidden.value; };
+  });
+  function refreshPlaces() { pickers.forEach(function (f) { f(); }); }
   fetch('airports.json').then(function (r) { return r.json(); }).then(function (rows) {
-    rows.forEach(function (r) { r._he = norm(r[5]); r._city = norm(r[1]); r._name = norm(r[2]); r._ctry = norm(regionHe(r[3])); r._ctryEn = norm(regionEn(r[3])); });
-    PLACES = rows; FlightCodec.setPlaces(rows); pickers.forEach(function (f) { f(); });
+    rows.forEach(function (r) { r._he = norm(r[5]); r._city = norm(r[1]); r._name = norm(r[2]); r._ctry = norm(region(r[3], 'he')); r._ctryEn = norm(region(r[3], 'en')); BY_CODE[r[0]] = r; });
+    PLACES = rows; FlightCodec.setPlaces(rows); refreshPlaces();
   }).catch(function () {});
 
-  ['airlineOther', 'retAirlineOther'].forEach(function (id) { $(id).addEventListener('input', function () { this.value = this.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); }); });
+  // ---------- fill the form from current settings (editing) ----------
+  function setDates(k, from, to) {
+    var days = daysBetween(from, to);
+    if (days === 0 || (days % 2 === 0 && [2, 6, 10].indexOf(days) >= 0)) {
+      $(k + 'Flex').checked = true; $(k + 'Date').value = addDays(from, days / 2); $(k + 'Flexibility').value = String(days / 2);
+    } else { $(k + 'Range').checked = true; $(k + 'From').value = from; $(k + 'To').value = to; }
+    $(k + 'Flex').dispatchEvent(new Event('change'));
+  }
+  function setAirline(selId, otherId, code) {
+    var known = [].some.call($(selId).options, function (o) { return o.value === code; });
+    $(selId).value = known ? code : 'other'; $(otherId).value = known ? '' : code;
+    $(otherId).parentNode.hidden = $(selId).value !== 'other';
+  }
+  function load(p0) {
+    var p = FlightCodec.withDefaults(p0);
+    $('origin').value = p.origin; $('destination').value = p.destination;
+    (p.oneWay ? $('tripOw') : $('tripRt')).checked = true;
+    ['adults', 'children', 'infants', 'checkedBags', 'carryOn', 'outMaxStops', 'outMaxHours', 'outDepFrom', 'outDepTo', 'maxLayover', 'maxPrice'].forEach(function (id) { $(id).value = String(p[id]); });
+    $('cabin').value = p.cabin; $('selfTransfer').checked = !!p.selfTransfer;
+    setAirline('airline', 'airlineOther', p.airline || '');
+    setDates('out', p.outFrom, p.outTo);
+    if (!p.oneWay) {
+      ['retMaxStops', 'retMaxHours', 'retDepFrom', 'retDepTo', 'maxTripDays'].forEach(function (id) { $(id).value = String(p[id]); });
+      setAirline('retAirline', 'retAirlineOther', p.retAirline || '');
+      setDates('ret', p.retFrom, p.retTo);
+    }
+    if (p.outMaxHours || p.outDepFrom || p.outDepTo !== 24 || p.airline) $('airline').closest('details').open = true;
+    if (!p.oneWay && (p.retDepFrom || p.retDepTo !== 24 || p.retAirline)) $('retAirline').closest('details').open = true;
+    if (p.maxLayover || p.selfTransfer) $('maxLayover').closest('details').open = true;
+  }
 
+  applyLang(true);
+  if (EDIT) load(EDIT);
+  syncTrip(); syncPrice(); refreshPlaces();
+
+  // ---------- submit ----------
   function airlineOf(selId, otherId) { var v = $(selId).value; return v === 'other' ? $(otherId).value.trim().toUpperCase() : v; }
   function n(id) { return Number($(id).value || 0); }
   function read() {
+    var od = datesOf('out');
     var p = {
-      invite: invite, origin: ($('origin').value || $('originQ').value).trim().toUpperCase(), destination: ($('destination').value || $('destinationQ').value).trim().toUpperCase(),
+      invite: invite, lang: lang,
+      origin: ($('origin').value || $('originQ').value).trim().toUpperCase(), destination: ($('destination').value || $('destinationQ').value).trim().toUpperCase(),
       adults: n('adults'), children: n('children'), infants: n('infants'), cabin: $('cabin').value,
       checkedBags: n('checkedBags'), carryOn: n('carryOn'),
       airline: airlineOf('airline', 'airlineOther'), outMaxStops: n('outMaxStops'), outMaxHours: n('outMaxHours'),
-      outDepFrom: n('outDepFrom'), outDepTo: n('outDepTo'), outFrom: datesOf('out')[0], outTo: datesOf('out')[1],
+      outDepFrom: n('outDepFrom'), outDepTo: n('outDepTo'), outFrom: od[0], outTo: od[1],
       oneWay: oneWay(), maxLayover: n('maxLayover'), selfTransfer: $('selfTransfer').checked, maxPrice: n('maxPrice'),
     };
     if (!p.oneWay) {
+      var rd = datesOf('ret');
       p.retAirline = airlineOf('retAirline', 'retAirlineOther'); p.retMaxStops = n('retMaxStops'); p.retMaxHours = n('retMaxHours');
-      p.retDepFrom = n('retDepFrom'); p.retDepTo = n('retDepTo'); p.retFrom = datesOf('ret')[0]; p.retTo = datesOf('ret')[1];
+      p.retDepFrom = n('retDepFrom'); p.retDepTo = n('retDepTo'); p.retFrom = rd[0]; p.retTo = rd[1];
       p.maxTripDays = n('maxTripDays');
     }
     return p;
   }
-
+  var esc = function (s) { return String(s).replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); };
   $('form').addEventListener('submit', function (ev) {
     ev.preventDefault();
-    var p = read(); var errs = FlightCodec.validate(p, todayIso);
+    var p = read(); var errs = FlightCodec.validate(p, todayIso, lang);
     var box = $('errors');
     if (errs.length) {
-      box.innerHTML = '<b>צריך לתקן:</b><ul>' + errs.map(function (e) { return '<li>' + e + '</li>'; }).join('') + '</ul>';
+      box.innerHTML = '<b>' + esc(t('fix')) + '</b><ul>' + errs.map(function (e) { return '<li>' + esc(e) + '</li>'; }).join('') + '</ul>';
       box.style.display = 'block'; box.scrollIntoView({ behavior: 'smooth', block: 'center' }); return;
     }
     box.style.display = 'none';
     var code = FlightCodec.encode(p);
     if (TEST) {
-      var esc = function (t) { return t.replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); };
-      // Decode the code back, exactly like the bot does, and show the bot's summary.
-      $('previewText').innerHTML = FlightCodec.describe(FlightCodec.decode(code)).map(function (l) { return esc(l).replace(/&lt;(\/?)b&gt;/g, '<$1b>'); }).join('\n');
+      $('previewText').innerHTML = FlightCodec.describe(FlightCodec.decode(code), lang).map(function (l) { return esc(l).replace(/&lt;(\/?)b&gt;/g, '<$1b>'); }).join('\n');
       $('previewCode').textContent = code;
-      $('form').hidden = true; $('preview').hidden = false; window.scrollTo(0, 0);
-      return;
+      $('form').hidden = true; $('preview').hidden = false; window.scrollTo(0, 0); return;
     }
     $('tgLink').href = 'https://t.me/' + BOT + '?start=' + code;
     $('startMsg').textContent = '/start ' + code;
     $('form').hidden = true; $('done').style.display = 'block'; window.scrollTo(0, 0);
   });
   $('copyBtn').addEventListener('click', function () {
-    var t = $('startMsg').textContent; var b = $('copyBtn');
-    var done = function () { b.textContent = 'הועתק ✓'; setTimeout(function () { b.textContent = 'העתקה'; }, 2000); };
-    if (navigator.clipboard) navigator.clipboard.writeText(t).then(done, function () {}); else { var r = document.createRange(); r.selectNode($('startMsg')); getSelection().removeAllRanges(); getSelection().addRange(r); done(); }
+    var txt = $('startMsg').textContent; var b = $('copyBtn');
+    var done = function () { b.textContent = t('copied'); setTimeout(function () { b.textContent = t('copy'); }, 2000); };
+    if (navigator.clipboard) navigator.clipboard.writeText(txt).then(done, function () {});
+    else { var r = document.createRange(); r.selectNode($('startMsg')); getSelection().removeAllRanges(); getSelection().addRange(r); done(); }
   });
   $('previewBack').addEventListener('click', function (e) { e.preventDefault(); $('preview').hidden = true; $('form').hidden = false; });
   $('back').addEventListener('click', function (e) { e.preventDefault(); $('done').style.display = 'none'; $('form').hidden = false; });

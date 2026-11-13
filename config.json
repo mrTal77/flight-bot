@@ -28,5 +28,6 @@
   ],
   "duffelEveryHours": 8,
   "concurrency": 6,
-  "challenger": true
+  "challenger": true,
+  "pagesUrl": "https://mrtal77.github.io/flight-bot/"
 }
