@@ -743,6 +743,10 @@ async function main() {
   const bestBag = top.find((c) => c.offers.every(bagReq)); // cheapest that meets the bag rule
 
   vlog(errors.map((e) => 'WARN ' + e).join('\n'));
+  // Public logs: error kinds and counts only, with links (route, dates) removed.
+  const errKinds = new Map();
+  for (const e of errors) { const k = e.replace(/https?:\/\/\S+/g, '<link>').replace(/\d{4}-\d{2}-\d{2}/g, '<date>').slice(0, 140); errKinds.set(k, (errKinds.get(k) || 0) + 1); }
+  for (const [k, n] of errKinds) console.log(`error x${n}: ${k}`);
   console.log(`valid offers: ${offers.length}; combinations: ${cands.length}; errors: ${errors.length}`);
   top.slice(0, 8).forEach((c) => vlog(c.kind, c.out, '->', c.ret, fmtUsd(c.usd), c.offers.map((o) => `${o.source} ${fmtUsd(o.usd)}`).join(' + ')));
 
