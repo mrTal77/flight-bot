@@ -41,6 +41,7 @@
     border-radius: 10px; padding: 10px 12px; width: 100%; min-width: 0; }
   input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
   input.code { text-transform: uppercase; letter-spacing: 0.08em; direction: ltr; }
+  #previewCode { word-break: break-all; }
   .seg { position: relative; display: grid; grid-template-columns: 1fr 1fr; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 3px; margin-bottom: 12px; }
   .seg input { position: absolute; top: 0; inset-inline-start: 0; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
   .seg label { text-align: center; padding: 8px; border-radius: 8px; cursor: pointer; color: var(--text); font-size: 15px; }
@@ -76,6 +77,11 @@
   .copy button { width: auto; padding: 8px 12px; font-size: 14px; }
   .preview { white-space: pre-line; line-height: 1.9; margin-bottom: 10px; }
   .place { position: relative; }
+  /* From ⇄ To: the swap button sits between the two airport fields (below them on very narrow screens). */
+  .route { grid-template-columns: 1fr auto 1fr; align-items: end; }
+  .swap { width: 40px; height: 44px; margin-bottom: 10px; padding: 0; border-radius: 12px; border: 1px solid var(--line);
+    background: var(--soft); color: var(--accent); font-size: 20px; line-height: 1; cursor: pointer; }
+  .swap:active { transform: scale(0.94); }
   .place-list { position: absolute; z-index: 5; top: 100%; inset-inline: 0; margin: 4px 0 0; padding: 4px; list-style: none;
     background: var(--card); border: 1px solid var(--line); border-radius: 10px; max-height: 280px; overflow-y: auto; box-shadow: 0 6px 20px rgba(0,0,0,.15); }
   .place-list li { padding: 8px 10px; border-radius: 8px; cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
@@ -85,7 +91,7 @@
   .place-list .ps { display: block; color: var(--muted); font-size: 12px; }
   .foot { color: var(--muted); font-size: 13px; margin-top: 16px; }
   [hidden] { display: none !important; }
-  @media (max-width: 380px) { .row { grid-template-columns: 1fr; } }
+  @media (max-width: 380px) { .row { grid-template-columns: 1fr; } .swap { justify-self: center; transform: rotate(90deg); margin: -6px 0 4px; height: 36px; } }
 </style>
 </head>
 <body>
@@ -111,10 +117,11 @@
         <input type="radio" name="trip" id="tripRt" value="rt" checked><label for="tripRt" data-t="roundTrip"></label>
         <input type="radio" name="trip" id="tripOw" value="ow"><label for="tripOw" data-t="oneWay"></label>
       </div>
-      <div class="row">
+      <div class="row route">
         <div class="field place"><label for="originQ" data-t="origin"></label>
           <input id="originQ" class="place-q" data-target="origin" autocomplete="off" data-tp="placePh" role="combobox" aria-expanded="false" aria-controls="originList">
           <input type="hidden" id="origin" value="TLV"><ul class="place-list" id="originList" role="listbox" hidden></ul></div>
+        <button type="button" class="swap" id="swapBtn">⇄</button>
         <div class="field place"><label for="destinationQ" data-t="destination"></label>
           <input id="destinationQ" class="place-q" data-target="destination" autocomplete="off" data-tp="placePh" role="combobox" aria-expanded="false" aria-controls="destinationList">
           <input type="hidden" id="destination" value=""><ul class="place-list" id="destinationList" role="listbox" hidden></ul></div>
@@ -255,7 +262,7 @@
       noInviteTitle: '🔒 צריך קישור הזמנה', noInviteText: 'ההרשמה פתוחה רק דרך קישור הזמנה. בקשו את הקישור ממי ששיתף איתכם את הבוט.',
       testBar: '🧪 מצב בדיקה: אחרי "אישרתי" יוצג סיכום בלבד, בלי לשלוח כלום לבוט.',
       editBar: '✏️ עדכון הגדרות: הטופס מולא בהגדרות הנוכחיות שלכם. משנים מה שרוצים ושומרים, וההגדרות החדשות יחליפו את הקודמות.',
-      secRoute: 'מסלול ונוסעים', roundTrip: 'הלוך-חזור', oneWay: 'כיוון אחד', origin: 'מוצא', destination: 'יעד', placePh: 'עיר, שדה או קוד',
+      secRoute: 'מסלול ונוסעים', roundTrip: 'הלוך-חזור', oneWay: 'כיוון אחד', origin: 'מוצא', destination: 'יעד', swap: 'החלפה בין המוצא ליעד', placePh: 'עיר, שדה או קוד',
       placeHint: 'אפשר לחפש בעברית או באנגלית: עיר, שם שדה, מדינה או קוד (למשל לונדון, Zanzibar, יוון, BKK). יותר מ-4,000 שדות בכל העולם.',
       adults: 'מבוגרים', children: 'ילדים (2–11)', infants: 'תינוקות', cabin: 'מחלקה', checkedBags: 'מזוודות לנוסע', carryOn: 'תיק עלייה לנוסע',
       bagsHint: 'הבוט מתריע על מחירים שהכבודה הזו כלולה בהם (מחיר שלא ידוע אם היא כלולה מסומן ב-*).',
@@ -285,7 +292,7 @@
       noInviteTitle: '🔒 Invite link needed', noInviteText: 'Sign-up is by invite link only. Ask the person who shared the bot with you for the link.',
       testBar: '🧪 Test mode: after "Confirm" you only see a summary; nothing is sent to the bot.',
       editBar: '✏️ Update settings: the form is filled with your current settings. Change what you want and save; the new settings replace the old ones.',
-      secRoute: 'Route and passengers', roundTrip: 'Round trip', oneWay: 'One way', origin: 'From', destination: 'To', placePh: 'City, airport or code',
+      secRoute: 'Route and passengers', roundTrip: 'Round trip', oneWay: 'One way', origin: 'From', destination: 'To', swap: 'Swap from and to', placePh: 'City, airport or code',
       placeHint: 'Search in English or Hebrew: city, airport, country or code (e.g. London, Zanzibar, Greece, BKK). Over 4,000 airports worldwide.',
       adults: 'Adults', children: 'Children (2–11)', infants: 'Infants', cabin: 'Cabin', checkedBags: 'Checked bags per passenger', carryOn: 'Carry-on per passenger',
       bagsHint: 'The bot alerts on prices that include these bags (a price where it is unknown is marked with *).',
@@ -347,6 +354,7 @@
       if (first) s.value = DEFAULTS[s.id] != null ? DEFAULTS[s.id] : (s.dataset.default || s.options[0].value);
     });
     $('langBtn').textContent = lang === 'he' ? 'English' : 'עברית';
+    $('swapBtn').title = t('swap'); $('swapBtn').setAttribute('aria-label', t('swap'));
     $('submitBtn').textContent = EDIT ? t('submitEdit') : t('submit');
     syncPrice(); refreshPlaces();
   }
@@ -451,6 +459,12 @@
     return function () { var r = BY_CODE[hidden.value]; if (r) q.value = labelOf(r); else if (hidden.value) q.value = hidden.value; };
   });
   function refreshPlaces() { pickers.forEach(function (f) { f(); }); }
+  // Swap origin and destination (the chosen airports, or whatever was typed), keeping everything else.
+  $('swapBtn').addEventListener('click', function () {
+    var o = $('origin').value; var d = $('destination').value; var oq = $('originQ').value; var dq = $('destinationQ').value;
+    $('origin').value = d; $('destination').value = o; $('originQ').value = dq; $('destinationQ').value = oq;
+    refreshPlaces();
+  });
   fetch('airports.json').then(function (r) { return r.json(); }).then(function (rows) {
     rows.forEach(function (r) { r._he = norm(r[5]); r._city = norm(r[1]); r._name = norm(r[2]); r._ctry = norm(region(r[3], 'he')); r._ctryEn = norm(region(r[3], 'en')); BY_CODE[r[0]] = r; });
     PLACES = rows; FlightCodec.setPlaces(rows); refreshPlaces();
