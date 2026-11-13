@@ -106,3 +106,28 @@ console.log('kayak filter test passed');
   assert.equal(legOkRet({ date: '2031-01-12', stops: 1, hours: 24, time: '23:15 – 20:20+1', carriers: ['AZ'] }), true);
   console.log('leg rule tests passed');
 }
+
+// Bag states: known, missing, unknown (unknown is shown with "*")
+{
+  const { bagState, bagReq } = require('./watch.js');
+  assert.equal(bagState({ bags: [1, 1] }), 'yes');
+  assert.equal(bagState({ bags: [1, 0] }), 'no');
+  assert.equal(bagState({ bags: [] }), 'unknown');
+  assert.equal(bagState({ bags: [1] }), 'unknown');
+  assert.equal(bagState({ bags: [], bagChecked: true }), 'yes');
+  assert.equal(bagReq({ bags: [1, 0] }), false);
+  assert.equal(bagReq({ bags: [] }), true);
+  console.log('bag state tests passed');
+}
+
+// Messages: a price with unknown bags gets "*"
+{
+  const { candText, setIlsRate } = require('./watch.js');
+  setIlsRate(3.2);
+  const offer = (bags) => ({ kind: 'out', usd: 300, source: 'kiwi.com', url: 'https://example.com', bags, legs: [{ date: '2030-12-20', time: '06:00 – 09:00', stops: 0, hours: 3, airline: 'X' }] });
+  const unknown = candText({ kind: 'ow', out: '2030-12-20', usd: 300, offers: [offer([])] }, 0);
+  const known = candText({ kind: 'ow', out: '2030-12-20', usd: 300, offers: [offer([1, 1])] }, 0);
+  assert.ok(unknown.includes('*</b>') && unknown.includes('לא ידוע'), 'unknown bags marked');
+  assert.ok(!known.includes('*</b>') && known.includes('כלולים'), 'known bags not marked');
+  console.log('message tests passed');
+}

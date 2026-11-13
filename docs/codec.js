@@ -12,7 +12,7 @@
   var CABINS = ['economy', 'premium', 'business', 'first'];
   var VERSION = 2;
   var LIMITS = {
-    maxRangeDays: 21, maxStops: 3, maxHours: 63, maxLayover: 31, maxTripDays: 127, maxPrice: 32767, minPrice: 20,
+    maxRangeDays: 31, maxStops: 3, maxHours: 63, maxLayover: 31, maxTripDays: 127, maxPrice: 32767, minPrice: 20,
     maxAdults: 9, maxChildren: 8, maxInfants: 4, maxPassengers: 9, maxCheckedPerPax: 2,
   };
 
@@ -62,7 +62,7 @@
     if (!d.test(p.outFrom || '') || !d.test(p.outTo || '')) e.push('חסרים תאריכי הלוך');
     else {
       if (p.outTo < p.outFrom) e.push('תאריך הסיום של ההלוך לפני תאריך ההתחלה');
-      if (diff(p.outFrom, p.outTo) > LIMITS.maxRangeDays - 1) e.push('טווח ההלוך ארוך מ-' + LIMITS.maxRangeDays + ' ימים');
+      if (diff(p.outFrom, p.outTo) > LIMITS.maxRangeDays - 1) e.push('טווח תאריכי ההלוך יכול להיות עד ' + LIMITS.maxRangeDays + ' ימים (אחרת כל בדיקה תיקח יותר מדי זמן). אפשר לבחור תאריך גמיש במקום');
       if (todayIso && p.outFrom < todayIso) e.push('תאריך ההלוך כבר עבר');
       if (dayNum(p.outFrom) < 0 || dayNum(p.outFrom) > 2047) e.push('תאריך הלוך מחוץ לטווח הנתמך');
     }
@@ -70,7 +70,7 @@
       if (!d.test(p.retFrom || '') || !d.test(p.retTo || '')) e.push('חסרים תאריכי חזור');
       else {
         if (p.retTo < p.retFrom) e.push('תאריך הסיום של החזור לפני תאריך ההתחלה');
-        if (diff(p.retFrom, p.retTo) > LIMITS.maxRangeDays - 1) e.push('טווח החזור ארוך מ-' + LIMITS.maxRangeDays + ' ימים');
+        if (diff(p.retFrom, p.retTo) > LIMITS.maxRangeDays - 1) e.push('טווח תאריכי החזור יכול להיות עד ' + LIMITS.maxRangeDays + ' ימים (אחרת כל בדיקה תיקח יותר מדי זמן). אפשר לבחור תאריך גמיש במקום');
         if (p.outFrom && p.retFrom < p.outFrom) e.push('החזור מתחיל לפני ההלוך');
         if (dayNum(p.retFrom) < 0 || dayNum(p.retFrom) > 2047) e.push('תאריך חזור מחוץ לטווח הנתמך');
       }

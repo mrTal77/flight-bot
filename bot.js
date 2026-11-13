@@ -38,8 +38,18 @@ function prefsText(p0) {
   const p = codec.withDefaults(p0);
   const stops = (n) => (n === 0 ? 'ישיר' : n === 1 ? 'עד עצירה אחת' : `עד ${n} עצירות`);
   const hours = (from, to) => (from === 0 && to === 24 ? '' : ` · המראה ${from}:00–${to}:00`);
+  // A flexible date from the landing page arrives as a range around it: show it as "about X (±n days)".
+  const when = (from, to) => {
+    const days = Math.round((Date.parse(to) - Date.parse(from)) / 864e5);
+    if (days === 0) return d(from);
+    if (days % 2 === 0 && days <= 10) {
+      const mid = new Date(Date.parse(from) + (days / 2) * 864e5).toISOString().slice(0, 10);
+      return `בערך ${d(mid)} (±${days / 2} ${days / 2 === 1 ? 'יום' : 'ימים'})`;
+    }
+    return `${d(from)}–${d(to)}`;
+  };
   const leg = (icon, name, from, to, airline, maxStops, maxHours, depFrom, depTo) =>
-    `${icon} ${name}: ${d(from)}–${d(to)} · ${airline ? AIRLINE[airline] || airline : 'כל חברה'} · ${stops(maxStops)}${maxHours ? ` · עד ${maxHours} ש׳` : ''}${hours(depFrom, depTo)}`;
+    `${icon} ${name}: ${when(from, to)} · ${airline ? AIRLINE[airline] || airline : 'כל חברה'} · ${stops(maxStops)}${maxHours ? ` · עד ${maxHours} ש׳` : ''}${hours(depFrom, depTo)}`;
   const pax = [`${p.adults} ${p.adults === 1 ? 'מבוגר' : 'מבוגרים'}`, p.children ? `${p.children} ${p.children === 1 ? 'ילד' : 'ילדים'}` : '', p.infants ? `${p.infants} ${p.infants === 1 ? 'תינוק' : 'תינוקות'}` : ''].filter(Boolean).join(', ');
   const cabin = { economy: 'תיירים', premium: 'פרימיום', business: 'עסקים', first: 'ראשונה' }[p.cabin];
   const bags = [p.carryOn ? 'תיק עלייה' : '', p.checkedBags ? (p.checkedBags === 1 ? 'מזוודה' : `${p.checkedBags} מזוודות`) : ''].filter(Boolean).join(' + ') || 'בלי כבודה';

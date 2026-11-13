@@ -8,7 +8,7 @@ Everything runs on free GitHub services: GitHub Actions (searches and the bot) a
 
 ## How it works
 
-- **Landing page** (`docs/`, GitHub Pages): a form. On "confirm" it packs the preferences into a short code
+- **Landing page** (`docs/`, GitHub Pages): a form with flexible dates (a date ±1/3/5 days, or a range up to 31 days), passengers, cabin, bags, stops, flight time, departure hours, airlines per direction, layover limit and self-transfer. On "confirm" it packs the preferences into a short code
   (`docs/codec.js`) and opens `t.me/<bot>?start=<code>`. Sign-up needs an invite link (`?i=<invite>`).
 - **Bot** (`bot.js`, every 5 minutes): reads new Telegram messages, checks the invite, validates the preferences,
   stores the user and starts a first search. Commands: `/status`, `/stop` (deletes the user's data), `/help`.
@@ -19,7 +19,8 @@ Everything runs on free GitHub services: GitHub Actions (searches and the bot) a
     with the return on any airline (the outbound is pinned to the chosen airline's departure hours).
   - For the bot owner only: Google Flights (daily), Duffel (optional `DUFFEL_TOKEN`), and algorithm B (see `CHALLENGER.md`).
 - Results are compared as one round-trip ticket vs. two separate tickets. An alert needs a price at or under the
-  limit and, when asked for, a checked bag known to be included.
+  limit (per passenger). Prices where the bags are known to be missing are dropped; when it is unknown, the price is
+  shown and marked with "*".
 
 ## Privacy (the repository is public)
 

@@ -143,18 +143,26 @@ function legOk(l, R) {
 }
 const legOkOut = (l) => legOk(l, OUT);
 const legOkRet = (l) => legOk(l, RET);
-// A checked bag must be included (the trip's rules). Kayak with the bag filter, Kiwi (asked for 1 hold
-// bag) and Duffel report it; offers where it is unknown are shown in the summary but never alerted.
+// Bags the user asked for: 'yes' (known to be included), 'no' (known to be missing) or 'unknown'.
 // o.bags = [carry-on, checked] per passenger. Kayak with its bag filter prices the checked bags in (bagChecked).
-const bagOk = (o) => {
+// 'unknown' offers are shown and can alert, marked with "*"; 'no' offers are never shown.
+function bagState(o) {
   const b = Array.isArray(o.bags) ? o.bags : [];
-  const checked = !CONFIG.checkedBags || o.bagChecked === true || (b.length === 2 && b[1] >= CONFIG.checkedBags);
-  const carry = !CONFIG.carryOn || (b.length >= 1 && b[0] >= CONFIG.carryOn) || (b.length < 2 && o.bagChecked === true);
-  return checked && carry;
-};
+  const part = (want, idx) => {
+    if (!want) return 'yes';
+    if (idx === 1 && o.bagChecked === true) return 'yes';
+    if (b.length === 2 || (idx === 0 && b.length === 1)) return b[idx] >= want ? 'yes' : (b[idx] === 0 && b.length === 2 ? 'no' : 'unknown');
+    if (idx === 0 && o.bagChecked === true) return 'yes'; // fares with a checked bag include a carry-on
+    return 'unknown';
+  };
+  const st = [part(CONFIG.checkedBags, 1), part(CONFIG.carryOn, 0)];
+  return st.includes('no') ? 'no' : st.includes('unknown') ? 'unknown' : 'yes';
+}
+const bagOk = (o) => bagState(o) === 'yes';
 const pairOk = (outDate, retDate) => !CONFIG.maxTripDays || retDate <= addDays(outDate, CONFIG.maxTripDays);
-// Offers that may trigger an alert: with the bags the user asked for.
-const bagReq = bagOk;
+// Offers that may be shown and alerted: bags included, or not known (marked "*").
+const bagReq = (o) => bagState(o) !== 'no';
+const bagUnknown = (c) => c.offers.some((o) => bagState(o) === 'unknown');
 
 // ---------- Kayak ----------
 // Kayak's stops filter: "stops=0,1" = nonstop or 1 stop. ("stops=~1" means exactly 1 stop; checked 8.11.)
@@ -521,8 +529,10 @@ function legLine(icon, label, l, priceText) {
 function bagsLine(offers) {
   if (!CONFIG.checkedBags && !CONFIG.carryOn) return '🧳 בלי כבודה';
   const want = [CONFIG.carryOn ? 'תיק עלייה' : '', CONFIG.checkedBags ? (CONFIG.checkedBags === 1 ? 'מזוודה' : `${CONFIG.checkedBags} מזוודות`) : ''].filter(Boolean).join(' + ');
-  return offers.every(bagOk) ? `🧳 ${want} כלולים${PAX > 1 ? ' (לנוסע)' : ''}` : `🧳 לבדוק בהזמנה שהכבודה כלולה (${want})`;
+  return offers.every(bagOk) ? `🧳 ${want} כלולים${PAX > 1 ? ' (לנוסע)' : ''}` : `🧳 * לא ידוע אם ${want} כלולים, לבדוק בהזמנה`;
 }
+// Price with "*" when it is not known whether the bags are included.
+const priceTag = (c) => `<b>${fmtBoth(c.usd)}${bagUnknown(c) ? '*' : ''}</b>`;
 const NUM = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣'];
 // Pick up to n options with different prices; note the other date pairs that share each price.
 function pickDistinct(list, n) {
@@ -566,7 +576,7 @@ function candText(c, i) {
   if (c.kind === 'ow') {
     const o = c.offers[0];
     return [
-      `${NUM[i] || i + 1 + ')'} <b>${fmtBoth(c.usd)}</b> · ${tripType(c)} · ${link(o, 'להזמנה ב-' + o.source)}`,
+      `${NUM[i] || i + 1 + ')'} ${priceTag(c)} · ${tripType(c)} · ${link(o, 'להזמנה ב-' + o.source)}`,
       legLine('🛫', 'הלוך', o.legs[0]),
       bagsLine([o]),
     ].join('\n') + alsoText(c);
@@ -574,7 +584,7 @@ function candText(c, i) {
   if (c.kind === 'rt') {
     const o = c.offers[0];
     return [
-      `${NUM[i] || i + 1 + ')'} <b>${fmtBoth(c.usd)}</b> · ${tripType(c)} · ${link(o, 'להזמנה ב-' + o.source.replace(/^B · /, ''))}`,
+      `${NUM[i] || i + 1 + ')'} ${priceTag(c)} · ${tripType(c)} · ${link(o, 'להזמנה ב-' + o.source.replace(/^B · /, ''))}`,
       ...(o.algo === 'B' ? [`🥊 נמצא ע״י אלגוריתם B · ${o.method}`] : []),
       legLine('🛫', 'הלוך', o.legs[0]),
       legLine('🛬', 'חזור', o.legs[1]),
@@ -583,7 +593,7 @@ function candText(c, i) {
   }
   const [o, r] = c.offers;
   return [
-    `${NUM[i] || i + 1 + ')'} <b>${fmtBoth(c.usd)}</b> · 2 כרטיסים נפרדים`,
+    `${NUM[i] || i + 1 + ')'} ${priceTag(c)} · 2 כרטיסים נפרדים`,
     legLine('🛫', 'הלוך', o.legs[0], `${link(o, fmtBoth(o.usd))} · ${o.source}`),
     legLine('🛬', 'חזור', r.legs[0], `${link(r, fmtBoth(r.usd))} · ${r.source}`),
     bagsLine([o, r]),
@@ -661,25 +671,26 @@ async function main() {
   const bOffers = valid(bPart.results);
 
   // Cheapest one-way per date (kept apart by bag status), then all allowed combinations.
-  const cheapestBy = (kind, withBag) => {
+  const cheapestBy = (kind, state) => {
     const m = new Map();
-    for (const o of offers.filter((x) => x.kind === kind && bagOk(x) === withBag)) if (!m.has(o.legs[0].date) || o.usd < m.get(o.legs[0].date).usd) m.set(o.legs[0].date, o);
+    for (const o of offers.filter((x) => x.kind === kind && bagState(x) === state)) if (!m.has(o.legs[0].date) || o.usd < m.get(o.legs[0].date).usd) m.set(o.legs[0].date, o);
     return m;
   };
   const cands = [];
   if (!RET) {
-    for (const wb of [true, false]) for (const [od, o] of cheapestBy('out', wb)) cands.push({ kind: 'ow', out: od, ret: null, usd: o.usd, offers: [o] });
+    for (const wb of ['yes', 'unknown']) for (const [od, o] of cheapestBy('out', wb)) cands.push({ kind: 'ow', out: od, ret: null, usd: o.usd, offers: [o] });
   } else {
     for (const o of offers.filter((x) => x.kind === 'rt')) cands.push({ kind: 'rt', out: o.legs[0].date, ret: o.legs[1].date, usd: o.usd, offers: [o] });
-    for (const wb of [true, false]) {
-      const outBy = cheapestBy('out', wb); const retBy = cheapestBy('ret', wb);
+    // Every pairing of bag states, so a with-bag outbound can combine with an unknown-bag return and so on.
+    for (const so of ['yes', 'unknown']) for (const sr of ['yes', 'unknown']) {
+      const outBy = cheapestBy('out', so); const retBy = cheapestBy('ret', sr);
       for (const [od, o] of outBy) for (const [rd, r] of retBy) if (pairOk(od, rd)) cands.push({ kind: 'mixed', out: od, ret: rd, usd: o.usd + r.usd, offers: [o, r] });
     }
   }
   cands.sort((a, b) => a.usd - b.usd);
   // One line per (kind, dates, bag known): a cheaper no-bag price must not hide the with-bag price of the same trip.
   const seen = new Set();
-  const top = cands.filter((c) => { const k = `${c.kind}|${c.out}|${c.ret}|${c.offers.every(bagOk)}`; if (seen.has(k)) return false; seen.add(k); return true; });
+  const top = cands.filter((c) => { const k = `${c.kind}|${c.out}|${c.ret}|${c.offers.map(bagState).join(',')}`; if (seen.has(k)) return false; seen.add(k); return true; });
   if (process.env.DUMP_OFFERS) fs.writeFileSync(process.env.DUMP_OFFERS, JSON.stringify({ at: now.toISOString(), ils: ILS_PER_USD, offers, bOffers }, null, 0));
   const aBest = top.find((c) => c.offers.every(bagReq));
 
@@ -696,7 +707,7 @@ async function main() {
       aTrip: aBest ? `${aBest.out}>${aBest.ret}` : null, aSource: aBest ? aBest.offers.map((o) => o.source).join(' + ') : null };
     console.log(`B: ${bOffers.length} results; winner ${duel.winner}`);
     if (SUMMARY) state.duels = [...(state.duels || []), duel].slice(-60);
-    for (const c of bCands) { const k = `B|${c.out}|${c.ret}|${c.offers.every(bagOk)}`; if (!seen.has(k)) { seen.add(k); top.push(c); } }
+    for (const c of bCands) { const k = `B|${c.out}|${c.ret}|${c.offers.map(bagState).join(',')}`; if (!seen.has(k)) { seen.add(k); top.push(c); } }
     top.sort((a, b) => a.usd - b.usd);
   }
   const best = top[0];
@@ -738,6 +749,7 @@ async function main() {
       `🔔 <b>נמצא מחיר מתחת ל-${fmtBoth(CONFIG.maxPriceUsd)}!</b>`,
       title, '',
       pickDiverse(under, 5).map(candText).join('\n\n'), '',
+      ...(under.slice(0, 5).some(bagUnknown) ? ['<i>* לא ידוע אם הכבודה כלולה במחיר</i>'] : []),
       '💡 לפתוח בגלישה בסתר, לוודא שהמזוודה כלולה, ולקנות מהר.',
     ].join('\n'));
     if (!TEST) state.lastAlert = { at: now.toISOString(), usd: under[0].usd };
@@ -751,10 +763,10 @@ async function main() {
     await telegram([
       `☀️ <b>סיכום יומי</b> · ${title}`,
       rules, '',
-      bestBag ? `הזול ביותר${CONFIG.checkedBags ? ' עם מזוודה' : ''}${PAX > 1 ? ' (לנוסע)' : ''}: <b>${fmtBoth(bestBag.usd)}</b> · הסף: ${fmtBoth(CONFIG.maxPriceUsd)}` : `לא נמצא מחיר מתאים · הסף: ${fmtBoth(CONFIG.maxPriceUsd)}`,
-      ...(bestBag && best.usd < bestBag.usd - 0.5 ? [`(בלי מזוודה מאומתת יש גם ${fmtBoth(best.usd)}; לא נספר להתראה)`] : []),
+      bestBag ? `הזול ביותר${PAX > 1 ? ' (לנוסע)' : ''}: ${priceTag(bestBag)} · הסף: ${fmtBoth(CONFIG.maxPriceUsd)}` : `לא נמצא מחיר מתאים · הסף: ${fmtBoth(CONFIG.maxPriceUsd)}`,
       ...(ILS_PER_USD ? [`💱 שער היום: $1 = ₪${ILS_PER_USD.toFixed(2)}`] : []), '',
       pickDiverse(top.filter((c) => c.offers.every(bagReq)), 5).map(candText).join('\n\n'), '',
+      ...(top.filter((c) => c.offers.every(bagReq)).slice(0, 5).some(bagUnknown) ? ['<i>* לא ידוע אם הכבודה כלולה במחיר</i>'] : []),
       ...(rtBySource ? [`📊 הלוך-חזור לפי אתר: ${rtBySource}`] : []),
       ...(mixed ? [`🔀 שני כרטיסים נפרדים: מ-${fmtBoth(mixed.usd)}`] : []),
       ...(duel ? [duel.winner === 'B'
@@ -768,4 +780,4 @@ async function main() {
 }
 
 if (require.main === module) main().catch((e) => { console.error('ERROR', e.message); process.exit(1); });
-module.exports = { configFor, slotFrom, bagReq, bagOk, kayakUrlForTest: kayakUrl, pickDiverse, tripType, setIlsRate: (r) => { ILS_PER_USD = r; }, pairOk, legOkOut, legOkRet, parseKayakCards, candText, pickDistinct, searchCenters };
+module.exports = { bagState, configFor, slotFrom, bagReq, bagOk, kayakUrlForTest: kayakUrl, pickDiverse, tripType, setIlsRate: (r) => { ILS_PER_USD = r; }, pairOk, legOkOut, legOkRet, parseKayakCards, candText, pickDistinct, searchCenters };

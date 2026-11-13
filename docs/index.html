@@ -38,9 +38,11 @@
   input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
   input.code { text-transform: uppercase; letter-spacing: 0.08em; direction: ltr; text-align: right; }
   .seg { display: grid; grid-template-columns: 1fr 1fr; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 3px; margin-bottom: 12px; }
-  .seg input { position: absolute; opacity: 0; pointer-events: none; }
+  .seg { position: relative; }
+  .seg input { position: absolute; top: 0; inset-inline-start: 0; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
   .seg label { text-align: center; padding: 8px; border-radius: 8px; cursor: pointer; color: var(--text); font-size: 15px; }
   .seg input:checked + label { background: var(--card); box-shadow: 0 1px 2px rgba(0,0,0,.12); font-weight: 600; }
+  .seg-sm label { padding: 6px; font-size: 14px; }
   .check { display: flex; gap: 10px; align-items: center; padding: 6px 0; color: var(--text); font-size: 15px; }
   .check input { width: 20px; height: 20px; accent-color: var(--accent); flex: none; }
   .hint { font-size: 13px; color: var(--muted); margin: -4px 0 8px; }
@@ -121,11 +123,19 @@
 
     <section class="card">
       <h2><span class="n">2</span> הלוך</h2>
-      <div class="row">
+      <div class="seg seg-sm" role="radiogroup" aria-label="סוג תאריך">
+        <input type="radio" name="outMode" id="outFlex" value="flex" checked><label for="outFlex">תאריך גמיש</label>
+        <input type="radio" name="outMode" id="outRange" value="range"><label for="outRange">טווח תאריכים</label>
+      </div>
+      <div class="row" id="outFlexBox">
+        <div class="field"><label for="outDate">בערך בתאריך</label><input type="date" id="outDate"></div>
+        <div class="field"><label for="outFlexibility">גמישות</label>
+          <select id="outFlexibility"><option value="0">בדיוק בתאריך הזה</option><option value="1">±1 יום</option><option value="3" selected>±3 ימים</option><option value="5">±5 ימים</option></select></div>
+      </div>
+      <div class="row" id="outRangeBox" hidden>
         <div class="field"><label for="outFrom">מתאריך</label><input type="date" id="outFrom"></div>
         <div class="field"><label for="outTo">עד תאריך</label><input type="date" id="outTo"></div>
       </div>
-      <p class="hint">עד 21 ימים בין התאריכים.</p>
       <div class="field"><label for="outMaxStops">עצירות</label><select id="outMaxStops" class="stops-select" data-default="0"></select></div>
       <details>
         <summary>מסננים מתקדמים להלוך</summary>
@@ -144,7 +154,16 @@
 
     <section class="card" id="retCard">
       <h2><span class="n">3</span> חזור</h2>
-      <div class="row">
+      <div class="seg seg-sm" role="radiogroup" aria-label="סוג תאריך">
+        <input type="radio" name="retMode" id="retFlex" value="flex" checked><label for="retFlex">תאריך גמיש</label>
+        <input type="radio" name="retMode" id="retRange" value="range"><label for="retRange">טווח תאריכים</label>
+      </div>
+      <div class="row" id="retFlexBox">
+        <div class="field"><label for="retDate">בערך בתאריך</label><input type="date" id="retDate"></div>
+        <div class="field"><label for="retFlexibility">גמישות</label>
+          <select id="retFlexibility"><option value="0">בדיוק בתאריך הזה</option><option value="1">±1 יום</option><option value="3" selected>±3 ימים</option><option value="5">±5 ימים</option></select></div>
+      </div>
+      <div class="row" id="retRangeBox" hidden>
         <div class="field"><label for="retFrom">מתאריך</label><input type="date" id="retFrom"></div>
         <div class="field"><label for="retTo">עד תאריך</label><input type="date" id="retTo"></div>
       </div>
@@ -186,7 +205,7 @@
 
     <div class="errors" id="errors" role="alert"></div>
     <button type="submit">אישרתי, להמשיך לטלגרם</button>
-    <p class="foot">הפרטים נשלחים רק לבוט בטלגרם ונשמרים אצלו מוצפנים. אפשר להפסיק בכל רגע עם הפקודה <bdi dir="ltr">/stop</bdi> בבוט.</p>
+    <p class="foot">הפרטים נשלחים רק לבוט בטלגרם ונשמרים אצלו מוצפנים. אפשר להפסיק בכל רגע עם הפקודה &#x2066;/stop&#x2069; בבוט.</p>
   </form>
 
   <section class="card done" id="done">
@@ -230,7 +249,20 @@
 
   var iso = function (d) { return new Date(d.getTime() - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10); };
   var todayIso = iso(new Date());
-  ['outFrom', 'outTo', 'retFrom', 'retTo'].forEach(function (id) { $(id).min = todayIso; });
+  ['outFrom', 'outTo', 'retFrom', 'retTo', 'outDate', 'retDate'].forEach(function (id) { $(id).min = todayIso; });
+  ['out', 'ret'].forEach(function (k) {
+    function sync() { var flex = $(k + 'Flex').checked; $(k + 'FlexBox').hidden = !flex; $(k + 'RangeBox').hidden = flex; }
+    $(k + 'Flex').addEventListener('change', sync); $(k + 'Range').addEventListener('change', sync); sync();
+  });
+  function addDays(isoDate, n) { var d = new Date(isoDate + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+  // Flexible date -> from/to range (the search covers every day in it).
+  function datesOf(k) {
+    if ($(k + 'Range').checked) return [$(k + 'From').value, $(k + 'To').value];
+    var d = $(k + 'Date').value; if (!d) return ['', ''];
+    var f = Number($(k + 'Flexibility').value); var from = addDays(d, -f);
+    if (from < todayIso) from = todayIso;
+    return [from, addDays(d, f)];
+  }
 
   function oneWay() { return $('tripOw').checked; }
   function pax() { return Number($('adults').value) + Number($('children').value) + Number($('infants').value); }
@@ -255,12 +287,12 @@
       adults: n('adults'), children: n('children'), infants: n('infants'), cabin: $('cabin').value,
       checkedBags: n('checkedBags'), carryOn: n('carryOn'),
       airline: airlineOf('airline', 'airlineOther'), outMaxStops: n('outMaxStops'), outMaxHours: n('outMaxHours'),
-      outDepFrom: n('outDepFrom'), outDepTo: n('outDepTo'), outFrom: $('outFrom').value, outTo: $('outTo').value,
+      outDepFrom: n('outDepFrom'), outDepTo: n('outDepTo'), outFrom: datesOf('out')[0], outTo: datesOf('out')[1],
       oneWay: oneWay(), maxLayover: n('maxLayover'), selfTransfer: $('selfTransfer').checked, maxPrice: n('maxPrice'),
     };
     if (!p.oneWay) {
       p.retAirline = airlineOf('retAirline', 'retAirlineOther'); p.retMaxStops = n('retMaxStops'); p.retMaxHours = n('retMaxHours');
-      p.retDepFrom = n('retDepFrom'); p.retDepTo = n('retDepTo'); p.retFrom = $('retFrom').value; p.retTo = $('retTo').value;
+      p.retDepFrom = n('retDepFrom'); p.retDepTo = n('retDepTo'); p.retFrom = datesOf('ret')[0]; p.retTo = datesOf('ret')[1];
       p.maxTripDays = n('maxTripDays');
     }
     return p;
