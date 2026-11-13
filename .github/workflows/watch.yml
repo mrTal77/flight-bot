@@ -11,7 +11,7 @@ on:
         description: "check | summary | test-alert"
         default: "summary"
       user:
-        description: "one user id (empty = all users)"
+        description: "empty = all users · admins = only the admin (for testing; nobody else gets messages) · or one user id"
         default: ""
 
 permissions:
@@ -38,6 +38,7 @@ jobs:
       - id: list
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ONLY: ${{ github.event.inputs.user }}
           MODE: ${{ github.event.inputs.mode || (github.event.schedule == '41 5 * * *' && 'summary' || 'check') }}
         run: |

@@ -52,7 +52,9 @@ Everything runs on free GitHub services: GitHub Actions (searches and the bot) a
 
 ## Setup
 
-0. Starting the workflows: GitHub's own schedule did not start in this repository, so cron-job.org starts the bot
+0. Roles: the owner (`TELEGRAM_CHAT_ID`) is the admin; everyone else is a user. Test changes on the admin first:
+   run the search with `user: admins` (workflow input), and nobody else gets a message.
+   Starting the workflows: GitHub's own schedule did not start in this repository, so cron-job.org starts the bot
    every 5 minutes and the search every 4 hours plus the daily summary, through the workflow-dispatch API.
    Steps (Hebrew): `CRON-SETUP.md`. Check the timing with `node tools/check-schedule.js [hours]`.
 

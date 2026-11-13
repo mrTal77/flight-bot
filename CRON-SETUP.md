@@ -9,16 +9,26 @@ GitHub לא מפעיל את התזמון של ה-repo הזה (0 הרצות מת�
 - הבוט (`bot.yml`) והחיפוש (`watch.yml`) מקבלים הפעלה חיצונית (workflow_dispatch), עם בחירת מצב לחיפוש (`check` / `summary`).
 - אין כפילויות: אם גם התזמון של GitHub יתחיל לעבוד, הרצות לא ירוצו במקביל (concurrency), אז אין התראות כפולות.
   את התזמון של GitHub משאירים כגיבוי.
+- **בדיקה רק על האדמין:** `"user":"admins"` מריץ את החיפוש רק על האדמין (בעל הבוט), ומשתמשים רגילים לא מקבלים שום הודעה.
+  אותו מנגנון משמש גם לבדיקת שינויים עתידיים לפני שהם מגיעים לכולם.
 - בדיקה שההפעלות מגיעות בזמן: `node tools/check-schedule.js 6` (6 השעות האחרונות; מספר ההרצות לפי מקור והפער הכי גדול).
 - יומן כשלים: `/errors` בבוט (רק לבעלים).
+
+## שני שלבים: קודם רק עליך
+
+- **שלב א׳ (בדיקה):** החיפוש והסיכום רצים **רק על האדמין (אתה)**, עם `"user":"admins"` בגוף הבקשה.
+  משתמשים רגילים לא מקבלים שום הודעה. הבוט עונה רק למי ששולח לו הודעה, כמו תמיד.
+- **שלב ב׳ (לכולם):** אחרי שבדקנו שהכל עובד אצלך, מוחקים את `"user":"admins"` משתי משימות החיפוש (צעד 16).
 
 ## שלוש המשימות שצריך ליצור
 
 | משימה | כתובת (URL) | מתי | גוף הבקשה (Request body) |
 |---|---|---|---|
 | בוט | `https://api.github.com/repos/mrTal77/flight-bot/actions/workflows/bot.yml/dispatches` | כל 5 דקות | `{"ref":"main"}` |
-| חיפוש | `https://api.github.com/repos/mrTal77/flight-bot/actions/workflows/watch.yml/dispatches` | כל 4 שעות, בדקה 17 | `{"ref":"main","inputs":{"mode":"check"}}` |
-| סיכום יומי | `https://api.github.com/repos/mrTal77/flight-bot/actions/workflows/watch.yml/dispatches` | כל יום ב-07:41 (שעון ישראל) | `{"ref":"main","inputs":{"mode":"summary"}}` |
+| חיפוש | `https://api.github.com/repos/mrTal77/flight-bot/actions/workflows/watch.yml/dispatches` | כל 4 שעות, בדקה 17 | שלב א׳: `{"ref":"main","inputs":{"mode":"check","user":"admins"}}` |
+| סיכום יומי | `https://api.github.com/repos/mrTal77/flight-bot/actions/workflows/watch.yml/dispatches` | כל יום ב-07:41 (שעון ישראל) | שלב א׳: `{"ref":"main","inputs":{"mode":"summary","user":"admins"}}` |
+
+בשלב ב׳ גוף הבקשה של החיפוש הוא `{"ref":"main","inputs":{"mode":"check"}}`, ושל הסיכום `{"ref":"main","inputs":{"mode":"summary"}}`.
 
 בכל שלוש המשימות: שיטה `POST`, ואותן ארבע כותרות (headers):
 
@@ -79,18 +89,25 @@ GitHub לא מפעיל את התזמון של ה-repo הזה (0 הרצות מת�
     - **Title:** `flight-bot: search`
     - **URL:** הכתובת של "חיפוש" מהטבלה
     - **Execution schedule:** Custom: דקה `17`, שעות `0,4,8,12,16,20`, כל יום
-    - **Request body:** `{"ref":"main","inputs":{"mode":"check"}}`
+    - **Request body:** `{"ref":"main","inputs":{"mode":"check","user":"admins"}}`
 13. [ ] שוב **Clone**:
     - **Title:** `flight-bot: daily summary`
     - **URL:** אותה כתובת של "חיפוש"
     - **Execution schedule:** כל יום ב-`07:41`
-    - **Request body:** `{"ref":"main","inputs":{"mode":"summary"}}`
-14. [ ] **Test run** לשתיהן: 204. ‏(ה-Test של הסיכום שולח לכל המשתמשים סיכום יומי נוסף. אפשר לוותר עליו ולחכות ל-07:41.)
+    - **Request body:** `{"ref":"main","inputs":{"mode":"summary","user":"admins"}}`
+14. [ ] **Test run** לשתיהן: 204. בשלב א׳ זה שולח הודעות רק לך.
 
 ### שלב 5: לעדכן אותי
 
-15. [ ] לכתוב לי "סיימתי". אני אבדוק עם `tools/check-schedule.js` שההפעלות מגיעות כל 5 דקות ושאין כשלים,
-    ואעדכן את התיעוד.
+15. [ ] לכתוב לי "סיימתי". אני אבדוק עם `tools/check-schedule.js` ועם `/errors` שההפעלות מגיעות כל 5 דקות, שהחיפושים רצו
+    **רק עליך**, ושאין כשלים.
+
+### שלב 6: לפתוח לכולם (אחרי האישור שלי)
+
+16. [ ] בשתי משימות החיפוש (`search` ו-`daily summary`) מוחקים מגוף הבקשה את `,"user":"admins"`.
+    - חיפוש: `{"ref":"main","inputs":{"mode":"check"}}`
+    - סיכום: `{"ref":"main","inputs":{"mode":"summary"}}`
+    - לא לעשות Test run לסיכום בשלב הזה, כי זה ישלח סיכום נוסף לכל המשתמשים. מחכים ל-07:41.
 
 ---
 
