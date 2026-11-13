@@ -125,6 +125,56 @@ async function retryOnce(fn, waitMs = 8000) {
   try { return await fn(); } catch (e) { await sleep(waitMs); return fn(); }
 }
 
+// ---------- search log (public, no personal data) ----------
+// logs/searches.csv: one row per search that failed, was blocked, or worked only on the second try.
+// logs/runs.csv: one row per user run, with counts per source. No routes, dates, prices or names: the user is
+// the random id, and error texts have links and dates removed. Read them with `node tools/logs.js` or /errors.
+const SEARCH_LOG = [];
+const scrub = (msg) => String(msg || '').split('\n')[0].replace(/https?:\/\/\S+/g, '<link>').replace(/\d{4}-\d{2}-\d{2}/g, '<date>').replace(/[",;\r]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
+function logSearch(source, market, kind, status, attempts, sec, results, error) {
+  SEARCH_LOG.push({ source, market, kind, status, attempts, sec, results, error: scrub(error) });
+}
+const blockedError = (why) => Object.assign(new Error(`blocked: ${why}`), { blocked: true });
+// Runs one search and records the outcome. A failure is tried once more after a pause; a block is not
+// (the site has decided we are a bot, and trying again would only hit the block again).
+async function tracked(source, market, kind, fn, waitMs = 8000, count = (r) => (Array.isArray(r) ? r.length : 0)) {
+  const t = Date.now();
+  const done = (status, attempts, results, err) => logSearch(source, market, kind, status, attempts, Math.round((Date.now() - t) / 1000), results, err);
+  let first;
+  try { const r = await fn(); done('ok', 1, count(r)); return r; } catch (e) {
+    if (e.blocked) { done('blocked', 1, 0, e.message); throw e; }
+    first = e;
+  }
+  await sleep(waitMs);
+  try { const r = await fn(); done('ok-after-retry', 2, count(r), first.message); return r; } catch (e) {
+    done(e.blocked ? 'blocked' : 'failed', 2, 0, e.message); throw e;
+  }
+}
+const csvCell = (v) => (/[,"\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
+function appendCsv(file, header, rows, keep = 5000) {
+  if (!rows.length) return;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  let lines = fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split('\n').filter(Boolean) : [];
+  if (!lines.length || lines[0] !== header.join(',')) lines = [header.join(','), ...lines.filter((l) => l !== header.join(','))];
+  lines.push(...rows.map((r) => r.map(csvCell).join(',')));
+  if (lines.length > keep + 1) lines = [lines[0], ...lines.slice(lines.length - keep)];
+  fs.writeFileSync(file, lines.join('\n') + '\n');
+}
+// Written at the end of every real run (not dry runs), and also when a run crashes.
+function writeLogs(outcome, offersCount, startedMs) {
+  if (DRY || !USER_ID) return;
+  const at = new Date().toISOString().slice(0, 19) + 'Z'; const run = process.env.GITHUB_RUN_ID || 'local';
+  const mode = process.env.TEST_ALERT === '1' ? 'test' : SUMMARY ? 'summary' : 'check';
+  const dir = path.join(__dirname, 'logs');
+  appendCsv(path.join(dir, 'searches.csv'), ['time_utc', 'run', 'user', 'mode', 'source', 'market', 'kind', 'status', 'attempts', 'seconds', 'results', 'error'],
+    SEARCH_LOG.filter((x) => x.status !== 'ok' && x.status !== 'skipped').map((x) => [at, run, USER_ID, mode, x.source, x.market, x.kind, x.status, x.attempts, x.sec, x.results, x.error]));
+  const n = (src, st) => SEARCH_LOG.filter((x) => x.source === src && (Array.isArray(st) ? st.includes(x.status) : x.status === st)).length;
+  const per = (src) => [n(src, ['ok', 'ok-after-retry']), n(src, 'failed'), n(src, 'blocked'), n(src, 'skipped')];
+  appendCsv(path.join(dir, 'runs.csv'), ['time_utc', 'run', 'user', 'mode', 'seconds', 'kayak_ok', 'kayak_failed', 'kayak_blocked', 'kayak_skipped',
+    'kiwi_ok', 'kiwi_failed', 'kiwi_blocked', 'kiwi_skipped', 'google_ok', 'google_failed', 'google_blocked', 'google_skipped', 'valid_offers', 'outcome'],
+  [[at, run, USER_ID, mode, Math.round((Date.now() - startedMs) / 1000), ...per('kayak'), ...per('kiwi'), ...per('google'), offersCount, scrub(outcome)]]);
+}
+
 // Run async jobs with a concurrency limit (keeps memory use on the runner low).
 async function pool(items, limit, fn) {
   const out = []; let i = 0;
@@ -250,11 +300,13 @@ async function kayakSearch(browser, market, task) {
     const url = kayakUrl(market.host, task.kind, `${task.a}-flexible-3days`, task.b && `${task.b}-flexible-3days`, fsWithBag);
     const resp = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
     if (resp && resp.status() >= 400) throw new Error(`HTTP ${resp.status()}`);
+    const isCheck = () => /\/security\/check|\/help\/bots/.test(page.url()); // Kayak's "are you a real user" pages
     let cards = [];
     for (let k = 0; k < 16; k++) {
       await page.waitForTimeout(5000);
       const text = await page.evaluate(() => (document.body ? document.body.innerText : ''));
-      if (/robot|captcha|human side|unusual traffic|תעבורה חריגה/i.test(text.slice(0, 2000))) throw new Error('blocked (bot check)');
+      if (isCheck()) throw blockedError('Kayak security check');
+      if (/robot|captcha|human side|unusual traffic|תעבורה חריגה|Security Check/i.test(text.slice(0, 2000))) throw blockedError('bot check');
       cards = parseKayakCards(text, market.currency);
       if (cards.length && !/\d+\s?%/.test(text.slice(0, 4000)) && k >= 2) break;
     }
@@ -353,7 +405,8 @@ function kiwiPush(results, sc, kind, extra) {
 }
 async function searchKiwi() {
   const results = []; const errors = [];
-  const call = (kind, a, extra) => retryOnce(() => kiwiCall({ ...kiwiCommon(), ...a }), 5000).then((sc) => kiwiPush(results, sc, kind, extra))
+  const call = (kind, a, extra) => tracked('kiwi', 'mcp.kiwi.com', kind, () => kiwiCall({ ...kiwiCommon(), ...a }), 5000, (sc) => (sc.itineraries || []).length)
+    .then((sc) => kiwiPush(results, sc, kind, extra))
     .catch((e) => errors.push(`kiwi.com ${kind}: ${e.message}`));
   const outArgs = { flyFrom: CONFIG.origin, flyTo: CONFIG.destination, departureDate: dmy(OUT.from), departureDateTo: dmy(OUT.to),
     max_sector_stopovers: OUT.maxStops, ...(OUT.maxHours ? { max_fly_duration: OUT.maxHours } : {}), ...kiwiTimes(OUT, ''),
@@ -458,7 +511,7 @@ async function googleSearch(browser, gm, task) {
       || /unusual traffic|No results|no flights/i.test(document.body.innerText), null, { timeout: 20000 }).catch(() => {});
     await page.waitForTimeout(2500);
     const text = await page.evaluate(() => document.body.innerText);
-    if (/unusual traffic/i.test(text)) throw new Error('bot check');
+    if (/unusual traffic/i.test(text)) throw blockedError('Google unusual traffic');
     const labels = await page.$$eval('[aria-label]', (els) => [...new Set(els.map((e) => e.getAttribute('aria-label')).filter((a) => /^From [\d,]+ US dollars/.test(a)))]);
     if (!labels.length) {
       if (/No results|no flights|0 results/i.test(text)) return [];
@@ -479,7 +532,8 @@ async function searchGoogle(browser, gm, tasks) {
   let failedInARow = 0;
   for (const t of tasks) {
     if (failedInARow >= 2) { errors.push(`${gm.label}: stopped after 2 failed searches in a row`); break; }
-    try { results.push(...await retryOnce(() => googleSearch(browser, gm, t), 10000)); failedInARow = 0; } catch (e) {
+    try { results.push(...await tracked('google', `google ${gm.gl}`, t.kind, () => googleSearch(browser, gm, t), 10000)); failedInARow = 0; } catch (e) {
+      if (e.blocked) { errors.push(`${gm.label}: blocked`); break; }
       failedInARow++; errors.push(`${gm.label} ${t.kind} ${t.a}: ${e.message.split('\n')[0].slice(0, 120)}`);
     }
     await sleep(2500);
@@ -660,6 +714,7 @@ async function getRates() {
   return { at: j.time_last_update_utc, rates: Object.fromEntries(Object.entries(j.rates).filter(([k]) => keep.has(k))) };
 }
 
+const STARTED = Date.now();
 async function main() {
   const state = loadState();
   const now = new Date();
@@ -682,8 +737,11 @@ async function main() {
   console.log(`kayak tasks per market: ${tasks.length}`);
   const kayakJob = (async () => {
     const jobs = CONFIG.markets.flatMap((m) => tasks.map((t) => ({ m, t })));
+    const blockedHosts = new Set(); // after a block, the rest of that site's searches in this run are skipped
     const res = await pool(jobs, CONFIG.concurrency || 6, async ({ m, t }) => {
-      try { return { results: await retryOnce(() => kayakSearch(browser, m, t)), errors: [] }; } catch (e) {
+      if (blockedHosts.has(m.host)) { logSearch('kayak', m.host, t.kind, 'skipped', 0, 0, 0, 'site blocked earlier in this run'); return { results: [], errors: [] }; }
+      try { return { results: await tracked('kayak', m.host, t.kind, () => kayakSearch(browser, m, t)), errors: [] }; } catch (e) {
+        if (e.blocked) blockedHosts.add(m.host);
         return { results: [], errors: [`${m.label || m.host} ${t.kind}: ${e.message.split('\n')[0].slice(0, 80)}`] };
       }
     });
@@ -754,7 +812,8 @@ async function main() {
   state.failStreak = best ? 0 : (state.failStreak || 0) + 1;
 
   if (!best) {
-    if (state.failStreak === 6) await telegram('⚠️ בוט הטיסות לא הצליח לקרוא מחירים 6 פעמים ברצף. אני ממשיך לנסות.');
+    if (state.failStreak === 6 && OWNER) await telegram('⚠️ בוט הטיסות לא הצליח לקרוא מחירים 6 פעמים ברצף. אני ממשיך לנסות.');
+    writeLogs('no prices', offers.length, STARTED);
     saveState(state);
     if (SUMMARY) await telegram('🛫 סיכום יומי: לא הצלחתי לקרוא מחירים היום. אנסה שוב בהרצה הבאה.');
     console.log('no prices found');
@@ -788,6 +847,15 @@ async function main() {
     if (!TEST) state.lastAlert = { at: now.toISOString(), usd: under[0].usd };
   }
 
+  // When Kayak gave nothing (it blocks automated searches from GitHub's servers), links to check it yourself.
+  const kayakCount = offers.filter((o) => /kayak/i.test(o.url || '')).length;
+  const kc = bestBag || best;
+  const kayakLinks = kayakCount ? '' : `🔎 לבדוק גם ב-Kayak בעצמך (±3 ימים): ${CONFIG.markets.map((m) => {
+    const bag = m.bagFilter && CONFIG.checkedBags ? `bfc=${CONFIG.checkedBags}` : '';
+    const kind = RET ? 'rt' : 'out';
+    return `<a href="${kayakUrl(m.linkHost || m.host, kind, `${kc.out}-flexible-3days`, RET && kc.ret && `${kc.ret}-flexible-3days`, [kayakFs(kind), bag].filter(Boolean).join(';'))}">${m.label || m.host}</a>`;
+  }).join(' · ')}`;
+
   if (SUMMARY) {
     const mixed = top.find((c) => c.kind === 'mixed' && c.offers.every(bagReq));
     const rtBySource = [...new Set(offers.filter((o) => o.kind === 'rt' && bagReq(o)).map((o) => o.source))]
@@ -802,13 +870,21 @@ async function main() {
       ...(top.filter((c) => c.offers.every(bagReq)).slice(0, 5).some(bagUnknown) ? ['<i>* לא ידוע אם הכבודה כלולה במחיר</i>'] : []),
       ...(rtBySource ? [`📊 הלוך-חזור לפי אתר: ${rtBySource}`] : []),
       ...(mixed ? [`🔀 שני כרטיסים נפרדים: מ-${fmtBoth(mixed.usd)}`] : []),
-      ...(errors.length ? [`⚠️ ${errors.length} חיפושים נכשלו`] : []),
+      ...(kayakLinks ? [kayakLinks] : []),
+      ...(OWNER && errors.length ? [`⚠️ ${errors.length} חיפושים נכשלו (רק אתה רואה את זה · /errors)`] : []),
       '', '<i>/status הגדרות · /stop הפסקה</i>',
     ].join('\n'));
   }
   delete state.duels; // history of the retired algorithm B
+  writeLogs('prices', offers.length, STARTED);
   saveState(state);
 }
 
-if (require.main === module) main().catch((e) => { console.error('ERROR', e.message); process.exit(1); });
-module.exports = { googleTfs, googleUrl, parseGoogleLabel, googleTasks, lowCostLinks, retryOnce, bagState, configFor, slotFrom, bagReq, bagOk, kayakUrlForTest: kayakUrl, pickDiverse, tripType, setIlsRate: (r) => { ILS_PER_USD = r; }, pairOk, legOkOut, legOkRet, parseKayakCards, candText, pickDistinct, searchCenters };
+if (require.main === module) {
+  main().catch((e) => {
+    console.error('ERROR', scrub(e.message));
+    try { writeLogs(`crash: ${e.message}`, 0, STARTED); } catch {}
+    process.exit(1);
+  });
+}
+module.exports = { scrub, tracked, appendCsv, googleTfs, googleUrl, parseGoogleLabel, googleTasks, lowCostLinks, retryOnce, bagState, configFor, slotFrom, bagReq, bagOk, kayakUrlForTest: kayakUrl, pickDiverse, tripType, setIlsRate: (r) => { ILS_PER_USD = r; }, pairOk, legOkOut, legOkRet, parseKayakCards, candText, pickDistinct, searchCenters };

@@ -44,7 +44,7 @@ const TX = {
       '/lang en · English',
       '/stop · הפסקת החיפוש ומחיקת הפרטים שלך',
     ].join('\n'),
-    ownerHelp: '/users · רשימת המשתמשים (רק לך)',
+    ownerHelp: '/users · רשימת המשתמשים (רק לך)\n/errors · יומן החיפושים שנכשלו (רק לך; /errors 72 ל-72 שעות)',
     notRegistered: '👋 כדי להירשם צריך לפתוח את קישור ההרשמה שקיבלת, למלא את פרטי הטיסה וללחוץ "אישרתי".',
     alreadyIn: '👋 אתה כבר רשום.',
     badCode: '⚠️ הקוד בקישור לא תקין. נסה למלא את הטופס שוב.',
@@ -79,7 +79,7 @@ const TX = {
       '/lang he · עברית',
       '/stop · stop searching and delete your details',
     ].join('\n'),
-    ownerHelp: '/users · list of users (only you)',
+    ownerHelp: '/users · list of users (only you)\n/errors · log of failed searches (only you; /errors 72 for 72 hours)',
     notRegistered: '👋 To sign up, open the sign-up link you received, fill in your flight and tap "Confirm".',
     alreadyIn: '👋 You are already signed up.',
     badCode: '⚠️ The code in the link is not valid. Please fill in the form again.',
@@ -191,7 +191,7 @@ function findPlaces(q) {
 const ALIASES = {
   start: ['start'], stop: ['stop', 'עצור', 'הפסק'], status: ['status', 'סטטוס', 'מצב'], edit: ['edit', 'עריכה', 'עדכון', 'טופס'],
   price: ['price', 'מחיר', 'סף'], dest: ['dest', 'destination', 'יעד'], out: ['out', 'הלוך'], back: ['back', 'return', 'חזור'],
-  lang: ['lang', 'language', 'שפה'], help: ['help', 'עזרה'], users: ['users', 'משתמשים'],
+  lang: ['lang', 'language', 'שפה'], help: ['help', 'עזרה'], users: ['users', 'משתמשים'], errors: ['errors', 'שגיאות'],
 };
 function parseCommand(text) {
   const m = text.match(/^\/?([^\s@]+)(?:@\S+)?\s*([\s\S]*)$/);
@@ -253,6 +253,13 @@ async function handle(db, msg, todayIso, toDispatch) {
     toDispatch.push(user.id);
     if (!user.owner) await notifyOwner(`👤 <b>${existing ? 'משתמש עדכן הגדרות' : 'משתמש חדש נרשם'}</b>: ${esc(user.name) || 'ללא שם'}\n${userLine(user)}\nסה״כ משתמשים: ${Object.keys(db.users).length}`);
     await reply(chatId, `${existing ? tx(L, 'updated') : tx(L, 'registered')}\n\n${prefsText(prefs)}\n\n${tx(L, 'firstSearch')}\n\n${help(user, L)}`);
+    return;
+  }
+
+  if (c && c.cmd === 'errors' && OWNER_CHAT && chatId === OWNER_CHAT) { // owner only: the search log
+    const hours = Math.min(24 * 14, Number(c.arg) || 24);
+    const repo = process.env.GITHUB_REPOSITORY || 'mrTal77/flight-bot';
+    await reply(chatId, `${require('./lib/logs').summarize(hours)}\n\nהטבלאות המלאות: <a href="https://github.com/${repo}/blob/main/logs/searches.csv">חיפושים שנכשלו</a> · <a href="https://github.com/${repo}/blob/main/logs/runs.csv">ריצות</a>`);
     return;
   }
 

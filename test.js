@@ -205,3 +205,35 @@ console.log('kayak filter test passed');
   let calls = 0;
   W.retryOnce(async () => { calls++; if (calls === 1) throw new Error('blocked'); return 'ok'; }, 1).then((r) => { assert.equal(r, 'ok'); assert.equal(calls, 2); console.log('low-cost link and retry tests passed'); });
 }
+
+// Search log: retry once, no retry after a block, CSV rows readable, summary for the owner
+{
+  const W = require('./watch.js');
+  const L = require('./lib/logs.js');
+  const os = require('os'); const fsx = require('fs'); const px = require('path');
+  (async () => {
+    let n = 0;
+    const r1 = await W.tracked('kiwi', 'm', 'out', async () => { n++; if (n === 1) throw new Error('HTTP 502'); return [1, 2]; }, 1);
+    assert.deepEqual([r1.length, n], [2, 2]);
+    let b = 0;
+    await W.tracked('kayak', 'h', 'rt', async () => { b++; throw Object.assign(new Error('blocked: check'), { blocked: true }); }, 1).catch(() => {});
+    assert.equal(b, 1, 'a block is not retried');
+    let f = 0;
+    await W.tracked('google', 'g', 'out', async () => { f++; throw new Error('timeout at https://x.example/TLV-BKK/2027-01-14'); }, 1).catch(() => {});
+    assert.equal(f, 2, 'a failure is retried once');
+    assert.equal(W.scrub('Timeout navigating to "https://www.kayak.com/flights/TLV-BKK/2027-01-14", now'), 'Timeout navigating to <link> now');
+    const dir = fsx.mkdtempSync(px.join(os.tmpdir(), 'logs-'));
+    const now = new Date().toISOString().slice(0, 19) + 'Z';
+    W.appendCsv(px.join(dir, 'searches.csv'), ['time_utc', 'run', 'user', 'mode', 'source', 'market', 'kind', 'status', 'attempts', 'seconds', 'results', 'error'],
+      [[now, '1', 'u1', 'check', 'kayak', 'www.he.kayak.com', 'rt', 'blocked', 1, 9, 0, 'blocked: Kayak security check'], [now, '1', 'u1', 'check', 'kiwi', 'mcp', 'out', 'ok-after-retry', 2, 3, 15, 'HTTP 502, "x"']]);
+    const head = ['time_utc', 'run', 'user', 'mode', 'seconds', 'kayak_ok', 'kayak_failed', 'kayak_blocked', 'kayak_skipped', 'kiwi_ok', 'kiwi_failed', 'kiwi_blocked', 'kiwi_skipped', 'google_ok', 'google_failed', 'google_blocked', 'google_skipped', 'valid_offers', 'outcome'];
+    W.appendCsv(px.join(dir, 'runs.csv'), head, [[now, '1', 'u1', 'check', 60, 0, 0, 1, 15, 3, 0, 0, 0, 0, 0, 0, 0, 44, 'prices']]);
+    W.appendCsv(px.join(dir, 'runs.csv'), head, [[now, '2', 'u2', 'summary', 80, 0, 0, 1, 15, 3, 0, 0, 0, 10, 0, 0, 0, 140, 'prices']]);
+    const rows = L.readCsv('searches.csv', dir);
+    assert.equal(rows.length, 2); assert.equal(rows[1].error, 'HTTP 502, "x"');
+    assert.equal(L.readCsv('runs.csv', dir).length, 2, 'one header, two runs');
+    const sm = L.summarize(24, Date.now(), dir);
+    assert.ok(sm.includes('ריצות: 2') && sm.includes('kayak: ✅ 0') && sm.includes('🚫 2 נחסמו') && sm.includes('1× kayak · blocked: Kayak security check') && sm.includes('🔁 1'), sm);
+    console.log('search log tests passed');
+  })().catch((e) => { console.error(e); process.exit(1); });
+}

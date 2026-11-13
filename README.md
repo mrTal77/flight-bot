@@ -28,6 +28,19 @@ Everything runs on free GitHub services: GitHub Actions (searches and the bot) a
   limit (per passenger). Prices where the bags are known to be missing are dropped; when it is unknown, the price is
   shown and marked with "*".
 
+## Search log (debugging)
+
+- `logs/searches.csv`: one row per search that failed, was blocked, or worked only on the second try
+  (time, run, user id, source, site, kind, status, attempts, seconds, error).
+- `logs/runs.csv`: one row per user run, with the number of searches per source that worked / failed / were blocked / were skipped.
+- No personal data: users are random ids; errors have links and dates removed; no routes, dates, prices or names.
+- Read it with `/errors` in the bot (owner only; `/errors 72` for 72 hours) or `node tools/logs.js [hours]`.
+  Parallel runs append to the same files; `.gitattributes` merges them line by line.
+- A site that blocks automated searches (Kayak shows a "security check" page to GitHub's servers since 13.11.2026)
+  is logged as `blocked`; the rest of that site's searches in the run are skipped, and the daily summary gives
+  links to check Kayak in a normal browser instead. Blocks are not retried and not worked around.
+- Users other than the owner never see search failures in their messages.
+
 ## Privacy (the repository is public)
 
 - **No personal data in the code.** Users, their Telegram chat ids, preferences, prices found and alert history are

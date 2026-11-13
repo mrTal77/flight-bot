@@ -92,10 +92,10 @@ jobs:
           USER_ID: ${{ matrix.user }}
         run: |
           f="data/state/$USER_ID.enc"
-          [ -f "$f" ] || exit 0
           git config user.name "flight-watch-bot"
           git config user.email "flight-watch-bot@users.noreply.github.com"
-          git add "$f"
+          [ -f "$f" ] && git add "$f"
+          git add logs/ 2>/dev/null || true   # search log; .gitattributes merges parallel runs line by line
           git diff --cached --quiet && exit 0
           git commit -m "state update"
           for i in 1 2 3 4 5; do git pull --rebase origin main && git push && exit 0; sleep $((RANDOM % 10 + 3)); done
