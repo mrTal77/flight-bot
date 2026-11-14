@@ -42,3 +42,15 @@ time_utc,run,user,mode,source,market,kind,status,attempts,seconds,results,error
 2026-11-13T23:50:21Z,43529953589,u7c851ff58a,check,kayak,www.he.kayak.com,out,blocked,2,22,0,blocked: Kayak security check
 2026-11-13T23:50:21Z,43529953589,u7c851ff58a,check,kayak,www.he.kayak.com,ret,blocked,2,22,0,blocked: Kayak security check
 2026-11-13T23:50:21Z,43529953589,u7c851ff58a,check,kayak,www.he.kayak.com,rt,blocked,2,22,0,blocked: Kayak security check
+2026-11-14T08:58:08Z,43578236328,u7c851ff58a,check,kayak,www.he.kayak.com,rt,blocked,1,6,0,blocked: Kayak security check
+2026-11-14T08:58:08Z,43578236328,u7c851ff58a,check,kayak,www.he.kayak.com,out,blocked,1,7,0,blocked: Kayak security check
+2026-11-14T08:58:08Z,43578236328,u7c851ff58a,check,kayak,www.he.kayak.com,rt,blocked,1,7,0,blocked: Kayak security check
+2026-11-14T08:58:08Z,43578236328,u7c851ff58a,check,kayak,www.he.kayak.com,ret,blocked,1,7,0,blocked: Kayak security check
+2026-11-14T08:58:08Z,43578236328,u7c851ff58a,check,kayak,www.he.kayak.com,ret,blocked,1,7,0,blocked: Kayak security check
+2026-11-14T08:58:08Z,43578236328,u7c851ff58a,check,kayak,www.he.kayak.com,out,blocked,1,7,0,blocked: Kayak security check
+2026-11-14T08:58:08Z,43578236328,u7c851ff58a,check,kayak,www.kayak.com.au,out,blocked,1,6,0,blocked: Kayak security check
+2026-11-14T08:58:08Z,43578236328,u7c851ff58a,check,kayak,www.kayak.com.au,out,blocked,1,6,0,blocked: Kayak security check
+2026-11-14T08:58:08Z,43578236328,u7c851ff58a,check,kayak,www.kayak.com.au,rt,blocked,1,6,0,blocked: Kayak security check
+2026-11-14T08:58:08Z,43578236328,u7c851ff58a,check,kayak,www.kayak.com.au,ret,blocked,1,6,0,blocked: Kayak security check
+2026-11-14T08:58:08Z,43578236328,u7c851ff58a,check,kayak,www.kayak.com.au,rt,blocked,1,6,0,blocked: Kayak security check
+2026-11-14T08:58:08Z,43578236328,u7c851ff58a,check,kayak,www.kayak.com.au,ret,blocked,1,7,0,blocked: Kayak security check
