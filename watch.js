@@ -20,7 +20,7 @@ const argv = process.argv.slice(2);
 const args = new Set(argv);
 const argVal = (k) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : null; };
 const DRY = args.has('--dry');
-const SUMMARY = args.has('--summary');
+let SUMMARY = args.has('--summary'); // may turn into a plain check in main(): one daily summary per user
 const VERBOSE = process.env.VERBOSE === '1';
 const vlog = (...a) => { if (VERBOSE) console.log(...a); };
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
@@ -768,6 +768,13 @@ const STARTED = Date.now();
 async function main() {
   const state = loadState();
   const now = new Date();
+  // At most one daily summary per user in 20 hours, whoever started the run (cron-job.org and GitHub's own
+  // schedule can both start one). A test alert (TEST_ALERT) or FORCE_SUMMARY=1 always sends it.
+  const forceSummary = process.env.TEST_ALERT === '1' || process.env.FORCE_SUMMARY === '1';
+  if (SUMMARY && !forceSummary && state.lastSummaryAt && (now - new Date(state.lastSummaryAt)) / 36e5 < 20) {
+    SUMMARY = false;
+    console.log('daily summary already sent in the last 20 hours: running as a check');
+  }
   let rates;
   try { rates = await getRates(); state.rates = rates; } catch (e) {
     if (!state.rates) throw e;
@@ -874,7 +881,7 @@ async function main() {
     if (state.failStreak === 6 && OWNER) await telegram('⚠️ בוט הטיסות לא הצליח לקרוא מחירים 6 פעמים ברצף. אני ממשיך לנסות.');
     writeLogs('no prices', offers.length, STARTED);
     saveState(state);
-    if (SUMMARY) await telegram('🛫 סיכום יומי: לא הצלחתי לקרוא מחירים היום. אנסה שוב בהרצה הבאה.');
+    if (SUMMARY) { await telegram('🛫 סיכום יומי: לא הצלחתי לקרוא מחירים היום. אנסה שוב בהרצה הבאה.'); if (!DRY) state.lastSummaryAt = now.toISOString(); saveState(state); }
     console.log('no prices found');
     return;
   }
@@ -933,6 +940,7 @@ async function main() {
       ...(OWNER && errors.length ? [`⚠️ ${errors.length} חיפושים נכשלו (רק אתה רואה את זה · /errors)`] : []),
       '', '<i>/status הגדרות · /stop הפסקה</i>',
     ].join('\n'));
+    state.lastSummaryAt = now.toISOString();
   }
   delete state.duels; // history of the retired algorithm B
   writeLogs('prices', offers.length, STARTED);

@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "check | summary | test-alert"
+        description: "check | summary (at most one a day per user) | force-summary | test-alert"
         default: "summary"
       user:
         description: "empty = all users · admins = only the admin (for testing; nobody else gets messages) · or one user id"
@@ -91,6 +91,7 @@ jobs:
           case "$MODE" in
             summary)    node watch.js --user "$USER_ID" --summary ;;
             test-alert) TEST_ALERT=1 MAX_PRICE_USD=99999 node watch.js --user "$USER_ID" --summary ;;
+            force-summary) FORCE_SUMMARY=1 node watch.js --user "$USER_ID" --summary ;;
             *)          node watch.js --user "$USER_ID" ;;
           esac
 
