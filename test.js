@@ -248,3 +248,24 @@ console.log('kayak filter test passed');
   assert.deepEqual(W.preferredFirst([{ kind: 'ow' }]).pref, []); // test profile has no preferred airlines
   console.log('preferred airline tests passed');
 }
+
+// Sent-messages log: rows readable, counted in the owner's summary
+{
+  const L = require('./lib/logs.js');
+  const os = require('os'); const fsx = require('fs'); const px = require('path');
+  const dir = fsx.mkdtempSync(px.join(os.tmpdir(), 'msgs-'));
+  const at = new Date().toISOString().slice(0, 19) + 'Z';
+  L.logMessages([
+    { at, user: 'u0000000001', sender: 'search', type: 'summary', status: 'sent', chars: 900 },
+    { at, user: 'u0000000001', sender: 'search', type: 'alert', status: 'sent', chars: 500 },
+    { at, user: 'u0000000001', sender: 'bot', type: 'signup', status: 'sent', chars: 400 },
+    { at, user: 'admin', sender: 'bot', type: 'admin-notice', status: 'sent', chars: 100 },
+    { at, user: 'u0000000001', sender: 'search', type: 'summary', status: 'failed', chars: 900 },
+  ], dir);
+  assert.equal(L.readCsv('messages.csv', dir).length, 5);
+  const head = ['time_utc', 'run', 'user', 'mode', 'seconds', 'kayak_ok', 'kayak_failed', 'kayak_blocked', 'kayak_skipped', 'kiwi_ok', 'kiwi_failed', 'kiwi_blocked', 'kiwi_skipped', 'google_ok', 'google_failed', 'google_blocked', 'google_skipped', 'valid_offers', 'outcome'];
+  L.appendCsv(px.join(dir, 'runs.csv'), head, [[at, '1', 'u0000000001', 'check', 10, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 5, 'prices']]);
+  const sm = L.summarize(24, Date.now(), dir);
+  assert.ok(sm.includes('✉️ הודעות שנשלחו: 4 · סיכומים 1 · התראות 1 · תשובות בצ׳אט 1'), sm);
+  console.log('message log tests passed');
+}

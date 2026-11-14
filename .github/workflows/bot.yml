@@ -38,7 +38,7 @@ jobs:
           if [ -n "$OWNER_CODE" ]; then node bot.js --owner-start "$OWNER_CODE"; else node bot.js; fi
       - name: Save users
         run: |
-          git add -A data/   # users file, plus search histories removed by /stop or a settings change
+          git add -A data/ logs/   # users file, search histories removed by /stop or a settings change, message log
           git diff --cached --quiet && exit 0
           git config user.name "flight-watch-bot"
           git config user.email "flight-watch-bot@users.noreply.github.com"

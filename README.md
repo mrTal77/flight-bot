@@ -33,6 +33,8 @@ Everything runs on free GitHub services: GitHub Actions (searches and the bot) a
 - `logs/searches.csv`: one row per search that failed, was blocked, or worked only on the second try
   (time, run, user id, source, site, kind, status, attempts, seconds, error).
 - `logs/runs.csv`: one row per user run, with the number of searches per source that worked / failed / were blocked / were skipped.
+- `logs/messages.csv`: one row per Telegram message sent (time, run, user id, bot or search, kind: summary / alert /
+  signup / a command / admin-notice, sent or failed, length). No message text and no chat ids.
 - No personal data: users are random ids; errors have links and dates removed; no routes, dates, prices or names.
 - Read it with `/errors` in the bot (owner only; `/errors 72` for 72 hours) or `node tools/logs.js [hours]`.
   Parallel runs append to the same files; `.gitattributes` merges them line by line.

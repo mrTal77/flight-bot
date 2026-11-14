@@ -119,11 +119,19 @@ async function tg(method, body) {
   if (!j.ok) throw new Error(`Telegram ${method} failed (${res.status})`); // never log the token or URL
   return j.result;
 }
-async function reply(chatId, text) {
-  if (DRY) { console.log(`--- reply to ${chatId} ---\n${text}\n---`); return; }
-  await tg('sendMessage', { chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true });
+// Every message sent is counted in logs/messages.csv (user id and kind only; no text, no chat id).
+const MESSAGES = [];
+let CURRENT = { type: 'other', user: '-' }; // what the message being answered is, and whose
+async function reply(chatId, text, kind) {
+  const row = { at: new Date().toISOString().slice(0, 19) + 'Z', user: kind === 'admin-notice' ? 'admin' : CURRENT.user, sender: 'bot', type: kind || CURRENT.type, chars: text.length };
+  if (DRY) { console.log(`--- reply to ${chatId} ---\n${text}\n---`); MESSAGES.push({ ...row, status: 'sent' }); return; }
+  try { await tg('sendMessage', { chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true }); } catch (e) {
+    MESSAGES.push({ ...row, status: 'failed' }); throw e;
+  }
+  MESSAGES.push({ ...row, status: 'sent' });
 }
-async function notifyOwner(text) { if (OWNER_CHAT) { try { await reply(OWNER_CHAT, text); } catch (e) { console.log('owner notice failed'); } } }
+async function notifyOwner(text) { if (OWNER_CHAT) { try { await reply(OWNER_CHAT, text, 'admin-notice'); } catch (e) { console.log('owner notice failed'); } } }
+function saveMessageLog() { if (!DRY) require('./lib/logs').logMessages(MESSAGES); }
 
 // Start a search for a user right away (instead of waiting for the next scheduled run).
 async function dispatchSearch(userId) {
@@ -229,6 +237,7 @@ async function handle(db, msg, todayIso, toDispatch) {
   // The sign-up code arrives as "/start CODE" (Start button) or pasted as "/start CODE" / "CODE" by hand.
   const pasted = /^[A-Za-z0-9_-]{20,64}$/.test(text) ? text : null;
   const c = pasted ? { cmd: 'start', arg: pasted } : parseCommand(text);
+  CURRENT = { type: c ? c.cmd : 'other', user: existing ? existing.id : '-' };
 
   if (c && c.cmd === 'start') {
     if (!c.arg) { await reply(chatId, existing ? `${tx(lang, 'alreadyIn')}\n\n${prefsText(existing.prefs)}\n\n${help(existing, lang)}` : tx(lang, 'notRegistered')); return; }
@@ -250,6 +259,7 @@ async function handle(db, msg, todayIso, toDispatch) {
     user.updatedAt = new Date().toISOString();
     db.users[user.id] = user;
     if (existing) store.deleteState(user.id); // new settings: start fresh
+    CURRENT.user = user.id; CURRENT.type = existing ? 'update' : 'signup';
     toDispatch.push(user.id);
     if (!user.owner) await notifyOwner(`👤 <b>${existing ? 'משתמש עדכן הגדרות' : 'משתמש חדש נרשם'}</b>: ${esc(user.name) || 'ללא שם'}\n${userLine(user)}\nסה״כ משתמשים: ${Object.keys(db.users).length}`);
     await reply(chatId, `${existing ? tx(L, 'updated') : tx(L, 'registered')}\n\n${prefsText(prefs)}\n\n${tx(L, 'firstSearch')}\n\n${help(user, L)}`);
@@ -373,6 +383,7 @@ async function main() {
     try { await handle(db, u.message, today, toDispatch); } catch (e) { console.log('message failed:', e.message.slice(0, 80)); }
   }
   store.saveUsers(db);
+  saveMessageLog();
   // Searches start only after the workflow has pushed the users file (a search started earlier would not see the change).
   const ids = [...new Set(toDispatch)];
   fs.writeFileSync(PENDING, JSON.stringify(ids));
@@ -386,6 +397,7 @@ async function ownerStart(code) {
   const msg = { chat: { id: OWNER_CHAT, type: 'private', first_name: '' }, text: `/start ${code}` };
   await handle(db, msg, new Date().toISOString().slice(0, 10), toDispatch);
   store.saveUsers(db);
+  saveMessageLog();
   fs.writeFileSync(PENDING, JSON.stringify([...new Set(toDispatch)]));
   console.log(`owner sign-up: ${toDispatch.length ? 'saved' : 'not saved'}; users: ${Object.keys(db.users).length}`);
 }

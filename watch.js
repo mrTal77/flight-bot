@@ -159,22 +159,15 @@ async function tracked(source, market, kind, fn, waitMs = 8000, count = (r) => (
     done(e.blocked ? 'blocked' : 'failed', 2, 0, e.message); throw e;
   }
 }
-const csvCell = (v) => (/[,"\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
-function appendCsv(file, header, rows, keep = 5000) {
-  if (!rows.length) return;
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  let lines = fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split('\n').filter(Boolean) : [];
-  if (!lines.length || lines[0] !== header.join(',')) lines = [header.join(','), ...lines.filter((l) => l !== header.join(','))];
-  lines.push(...rows.map((r) => r.map(csvCell).join(',')));
-  if (lines.length > keep + 1) lines = [lines[0], ...lines.slice(lines.length - keep)];
-  fs.writeFileSync(file, lines.join('\n') + '\n');
-}
+const { appendCsv, logMessages } = require('./lib/logs');
+const MESSAGES = []; // messages sent in this run, for logs/messages.csv
 // Written at the end of every real run (not dry runs), and also when a run crashes.
 function writeLogs(outcome, offersCount, startedMs) {
   if (DRY || !USER_ID) return;
   const at = new Date().toISOString().slice(0, 19) + 'Z'; const run = process.env.GITHUB_RUN_ID || 'local';
   const mode = process.env.TEST_ALERT === '1' ? 'test' : SUMMARY ? 'summary' : 'check';
   const dir = path.join(__dirname, 'logs');
+  logMessages(MESSAGES.map((m) => ({ ...m, user: USER_ID, sender: 'search' })), dir);
   appendCsv(path.join(dir, 'searches.csv'), ['time_utc', 'run', 'user', 'mode', 'source', 'market', 'kind', 'status', 'attempts', 'seconds', 'results', 'error'],
     SEARCH_LOG.filter((x) => x.status !== 'ok' && x.status !== 'skipped').map((x) => [at, run, USER_ID, mode, x.source, x.market, x.kind, x.status, x.attempts, x.sec, x.results, x.error]));
   const n = (src, st) => SEARCH_LOG.filter((x) => x.source === src && (Array.isArray(st) ? st.includes(x.status) : x.status === st)).length;
@@ -597,7 +590,7 @@ async function searchDuffel(dates) {
 // ---------- Telegram ----------
 // Sends a message to this user. Tried once more on failure; a message that still fails is logged
 // (logs/searches.csv, source "telegram") and the run goes on, so the search state is still saved.
-async function telegram(text) {
+async function telegram(text, type = 'message') {
   if (DRY) { console.log('--- TELEGRAM (dry run) ---\n' + text + '\n---'); return; }
   const token = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
   const chatId = USER.chatId;
@@ -617,7 +610,12 @@ async function telegram(text) {
       throw new Error(`Telegram HTTP ${res.status} ${String(j.description || '').slice(0, 100)}`);
     }
   };
-  try { await tracked('telegram', 'api.telegram.org', 'message', send, 5000, () => 1); } catch (e) {
+  const at = () => new Date().toISOString().slice(0, 19) + 'Z';
+  try {
+    await tracked('telegram', 'api.telegram.org', 'message', send, 5000, () => 1);
+    MESSAGES.push({ at: at(), type, status: 'sent', chars: text.length });
+  } catch (e) {
+    MESSAGES.push({ at: at(), type, status: 'failed', chars: text.length });
     console.log(`telegram send failed: ${scrub(e.message)} (${text.length} chars)`);
   }
 }
@@ -878,10 +876,10 @@ async function main() {
   state.failStreak = best ? 0 : (state.failStreak || 0) + 1;
 
   if (!best) {
-    if (state.failStreak === 6 && OWNER) await telegram('⚠️ בוט הטיסות לא הצליח לקרוא מחירים 6 פעמים ברצף. אני ממשיך לנסות.');
+    if (state.failStreak === 6 && OWNER) await telegram('⚠️ בוט הטיסות לא הצליח לקרוא מחירים 6 פעמים ברצף. אני ממשיך לנסות.', 'warning');
     writeLogs('no prices', offers.length, STARTED);
     saveState(state);
-    if (SUMMARY) { await telegram('🛫 סיכום יומי: לא הצלחתי לקרוא מחירים היום. אנסה שוב בהרצה הבאה.'); if (!DRY) state.lastSummaryAt = now.toISOString(); saveState(state); }
+    if (SUMMARY) { await telegram('🛫 סיכום יומי: לא הצלחתי לקרוא מחירים היום. אנסה שוב בהרצה הבאה.', 'summary'); if (!DRY) state.lastSummaryAt = now.toISOString(); saveState(state); }
     console.log('no prices found');
     return;
   }
@@ -909,7 +907,7 @@ async function main() {
       optionsText(under, 5), '',
       ...(under.slice(0, 5).some(bagUnknown) ? ['<i>* לא ידוע אם הכבודה כלולה במחיר</i>'] : []),
       '💡 לפתוח בגלישה בסתר, לוודא שהמזוודה כלולה, ולקנות מהר.',
-    ].join('\n'));
+    ].join('\n'), TEST ? 'test-alert' : 'alert');
     if (!TEST) state.lastAlert = { at: now.toISOString(), usd: under[0].usd };
   }
 
@@ -939,7 +937,7 @@ async function main() {
       ...(kayakLinks ? [kayakLinks] : []),
       ...(OWNER && errors.length ? [`⚠️ ${errors.length} חיפושים נכשלו (רק אתה רואה את זה · /errors)`] : []),
       '', '<i>/status הגדרות · /stop הפסקה</i>',
-    ].join('\n'));
+    ].join('\n'), 'summary');
     state.lastSummaryAt = now.toISOString();
   }
   delete state.duels; // history of the retired algorithm B
