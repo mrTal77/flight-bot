@@ -269,3 +269,68 @@ console.log('kayak filter test passed');
   assert.ok(sm.includes('✉️ הודעות שנשלחו: 4 · סיכומים 1 · התראות 1 · תשובות בצ׳אט 1'), sm);
   console.log('message log tests passed');
 }
+
+// Trips (several one-way flights): v5 code, validation, chat commands, per-flight alerts and the short summary
+{
+  const C = require('./docs/codec.js');
+  const trip = { trip: true, invite: 'Ab3_x9', lang: 'he', checkedBags: 0, carryOn: 1, legs: [
+    { origin: 'TLV', destination: 'BKK', adults: 1, outFrom: '2030-01-10', outTo: '2030-01-16', maxPrice: 450, outMaxStops: 1 },
+    { origin: 'BKK', destination: 'CNX', adults: 2, outFrom: '2030-01-20', outTo: '2030-01-22', maxPrice: 60, outMaxStops: 0, airline: 'FD' },
+    { origin: 'CNX', destination: 'NRT', adults: 2, outFrom: '2030-02-01', outTo: '2030-02-03', maxPrice: 300, outMaxStops: 1, outDepFrom: 6, outDepTo: 20, outMaxHours: 9 }] };
+  const code = C.encode(trip);
+  assert.ok(code.length <= C.TG_MAX, `3 flights fit in a Telegram link (${code.length})`);
+  const q = C.decode(code);
+  assert.equal(q.trip, true); assert.equal(q.legs.length, 3);
+  assert.deepEqual(q.legs.map((l) => [l.origin, l.destination, l.adults, l.outFrom, l.outTo, l.maxPrice, l.airline, l.outMaxStops]),
+    [['TLV', 'BKK', 1, '2030-01-10', '2030-01-16', 450, '', 1], ['BKK', 'CNX', 2, '2030-01-20', '2030-01-22', 60, 'FD', 0], ['CNX', 'NRT', 2, '2030-02-01', '2030-02-03', 300, '', 1]]);
+  assert.deepEqual([q.legs[2].outDepFrom, q.legs[2].outDepTo, q.legs[2].outMaxHours, q.checkedBags, q.carryOn], [6, 20, 9, 0, 1]);
+  assert.deepEqual(C.validate(q, '2029-12-01'), []);
+  const lp = C.legPrefs(q, 1);
+  assert.deepEqual([lp.oneWay, lp.origin, lp.adults, lp.checkedBags, lp.maxPrice], [true, 'BKK', 2, 0, 60]);
+  // five flights, different origins, passengers and prices: still decodes (a long code is pasted to the bot)
+  const L = (o, d, i) => ({ origin: o, destination: d, adults: 1 + (i % 3), children: i % 2, outFrom: `2030-0${i + 1}-01`, outTo: `2030-0${i + 1}-31`, maxPrice: 1000 + i, outMaxStops: 2, airline: 'LY', outMaxHours: 20, outDepFrom: 6, outDepTo: 22 });
+  const five = { trip: true, invite: 'Ab3_x9', lang: 'en', legs: [L('TLV', 'BKK', 0), L('LHR', 'CNX', 1), L('JFK', 'NRT', 2), L('CDG', 'MIA', 3), L('ATH', 'FCO', 4)] };
+  const fc = C.encode(five);
+  assert.ok(fc.length > C.TG_MAX && fc.length <= C.MAX_CODE);
+  assert.deepEqual(C.decode(fc).legs[4], { ...L('ATH', 'FCO', 4), infants: 0 });
+  // errors carry the flight number
+  const bad = { ...trip, legs: [trip.legs[0], { ...trip.legs[1], outFrom: '2030-01-05', outTo: '2030-01-05' }, { ...trip.legs[2], destination: 'CNX' }] };
+  const e = C.validate(bad, '2029-12-01');
+  assert.ok(e.some((x) => x.startsWith('טיסה 2:')) && e.some((x) => x.startsWith('טיסה 3:')), e.join(' | '));
+  assert.ok(C.validate({ ...trip, legs: [trip.legs[0]] }, '2029-12-01').length, 'at least two flights');
+  assert.ok(C.validate({ ...trip, legs: [...trip.legs, ...trip.legs] }, '2029-12-01').length, 'at most five flights');
+  assert.ok(C.validate({ ...trip, legs: [{ ...trip.legs[0], outTo: '2030-03-30' }, trip.legs[1]] }, '2029-12-01').some((x) => x.includes('31')), 'a flight range is at most 31 days');
+  // old codes keep working, and a long code is only accepted for trips
+  const rt = { invite: 'Ab3_x9', origin: 'TLV', destination: 'ATH', outFrom: '2030-11-14', outTo: '2030-11-20', retFrom: '2030-11-24', retTo: '2030-11-26', maxPrice: 300 };
+  assert.equal(C.decode(C.encode(rt)).destination, 'ATH');
+  assert.throws(() => C.decode(C.encode(rt) + 'AAAAAAAAAAAAAAAAAAAAAAAAAAAA'));
+  assert.ok(C.describe(q, 'he').join('\n').includes('מסע: 3 טיסות'));
+  assert.ok(C.describe(q, 'en').join('\n').includes('Trip: 3 flights'));
+  console.log('trip code tests passed');
+
+  // engine: per-flight alert rule, total, short leg text
+  const W = require('./watch.js');
+  const now = new Date('2030-01-01T12:00:00Z');
+  W.useProfile(lp, 'leg2');
+  const c = (usd, date) => ({ kind: 'ow', out: date, usd, offers: [{ usd, source: 'kiwi.com', url: 'https://k', bags: [1, 0], legs: [{ date, time: '08:30 – 10:00', stops: 0, airline: 'Thai AirAsia' }] }] });
+  assert.equal(W.legShouldAlert([], null, now), false);
+  assert.equal(W.legShouldAlert([c(50, '2030-01-21')], null, now), true);
+  assert.equal(W.legShouldAlert([c(50, '2030-01-21')], { at: '2030-01-01T10:00:00Z', usd: 52 }, now), false, 'not again within hours for a small drop');
+  assert.equal(W.legShouldAlert([c(40, '2030-01-21')], { at: '2030-01-01T10:00:00Z', usd: 52 }, now), true, 'again after a $10 drop');
+  const txt = W.tripLegText(1, [c(31, '2030-01-20'), c(33, '2030-01-21'), c(40, '2030-01-22')], true);
+  assert.ok(txt.startsWith('2️⃣ <b>בנגקוק → צ׳יאנג מאי</b> · 20–22.1 · 2 נוסעים · סף $60'), txt);
+  assert.equal(txt.split('\n').length, 3, 'cheapest + one more within 10% on another date');
+  assert.ok(txt.includes('לנוסע') && txt.includes('airasia.com'));
+  assert.equal(W.tripLegText(1, [], true).split('\n')[1].trim(), 'לא נמצא מחיר מתאים');
+  assert.deepEqual(W.tripTotal([{ i: 0, pax: 1, best: { usd: 365 } }, { i: 1, pax: 2, best: { usd: 31 } }, { i: 2, pax: 2, best: null }]), { usd: 427, missing: [3] });
+  assert.equal(W.legSig(lp), 'BKK|CNX|2030-01-20|2030-01-22|2|0|0');
+  console.log('trip engine tests passed');
+
+  // bot: trip owner line, paused users, /price for one flight
+  const bot = require('./bot.js');
+  assert.equal(bot.routeOf(q), 'מסע: תל אביב → בנגקוק → צ׳יאנג מאי → טוקיו');
+  assert.ok(bot.userLine({ prefs: q }).includes('3 טיסות') && bot.userLine({ prefs: q }).includes('$450/$60/$300'));
+  assert.equal(bot.isPaused({ id: 'uab7fee9cec' }), true);
+  assert.equal(bot.isPaused({ id: 'u0000000001' }), false);
+  console.log('trip bot tests passed');
+}

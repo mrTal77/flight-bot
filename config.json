@@ -1,6 +1,9 @@
 {
   "botUsername": "Ffffffflightticketbot",
   "maxUsers": 10,
+  "pausedUsers": [
+    "uab7fee9cec"
+  ],
   "invites": [
     {
       "label": "default",

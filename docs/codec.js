@@ -12,7 +12,11 @@
   var CABINS = ['economy', 'premium', 'business', 'first'];
   var LANGS = ['he', 'en'];
   // v4 adds the language. v2 (ranges up to 31 days) and v3 codes are still accepted.
-  var VERSION = 4;
+  // v5 is a trip of several one-way flights ("legs"); a round trip or one way is still written as v4.
+  var VERSION = 4; var TRIP_VERSION = 5;
+  var MAX_LEGS = 5; var MIN_LEGS = 2; var MAX_LEG_RANGE = 31; // days in one leg's date range
+  var TG_MAX = 64; // longest code in a Telegram start link; a longer trip code is pasted to the bot by hand
+  var MAX_CODE = 200; // longest code the bot accepts (pasted)
   var LIMITS = {
     maxStops: 3, maxHours: 63, maxLayover: 31, maxTripDays: 127, maxPrice: 32767, minPrice: 20,
     maxAdults: 9, maxChildren: 8, maxInfants: 4, maxPassengers: 9, maxCheckedPerPax: 2,
@@ -68,14 +72,23 @@
       'The longest trip ({a} days) is too short for these dates: there are {b} days between the latest outbound and the earliest return. Make it longer, or set 0'],
     price: ['מחיר מקסימלי לנוסע: {a} עד {b} דולר', 'Price limit per passenger: ${a} to ${b}'],
     invite: ['קוד ההזמנה חסר או לא תקין', 'The invite code is missing or not valid'],
+    legCount: ['במסע יש {a} עד {b} טיסות', 'A trip has {a} to {b} flights'],
+    legOrder: ['הטיסה מתחילה לפני הטיסה הקודמת', 'This flight starts before the previous one'],
+    legRange: ['טווח התאריכים ארוך מ-{a} ימים', 'The date range is longer than {a} days'],
+    legPrefix: ['טיסה {a}: ', 'Flight {a}: '],
   };
   var LEG = { out: ['הלוך', 'outbound'], ret: ['חזור', 'return'] };
   function msg(lang, key, a, b) { return MSG[key][lang === 'en' ? 1 : 0].replace('{a}', a).replace('{b}', b); }
 
   // Check a preferences object; returns a list of problems in the user's language, empty if OK.
   function validate(p0, todayIso, lang) {
+    if (isTrip(p0)) return validateTrip(p0, todayIso, lang);
+    return check(p0, todayIso, lang).map(function (x) { return x.text; });
+  }
+  // Problems as { key, text }, so a trip can tell the shared settings from each flight's own.
+  function check(p0, todayIso, lang) {
     var p = withDefaults(p0); var e = []; var L = lang || p.lang;
-    var m = function (k, a, b) { e.push(msg(L, k, a, b)); };
+    var m = function (k, a, b) { e.push({ key: k, text: msg(L, k, a, b) }); };
     var iata = /^[A-Z]{3}$/; var al = /^[A-Z0-9]{2}$/; var d = /^\d{4}-\d{2}-\d{2}$/;
     if (!iata.test(p.origin || '')) m('origin');
     if (!iata.test(p.destination || '')) m('destination');
@@ -118,6 +131,37 @@
     return e;
   }
 
+  // ---------- trips: several one-way flights ----------
+  // { trip: true, lang, invite, cabin, checkedBags, carryOn, maxLayover, selfTransfer,
+  //   legs: [{ origin, destination, adults, children, infants, outFrom, outTo, airline, outMaxStops,
+  //            outMaxHours, outDepFrom, outDepTo, maxPrice }] }
+  // Cabin, bags, layover and self-transfer are shared; passengers, dates, filters and the price limit are per flight.
+  var SHARED = ['cabin', 'checkedBags', 'carryOn', 'maxLayover', 'selfTransfer'];
+  var LEG_KEYS = ['origin', 'destination', 'adults', 'children', 'infants', 'outFrom', 'outTo', 'airline', 'outMaxStops', 'outMaxHours', 'outDepFrom', 'outDepTo', 'maxPrice'];
+  function isTrip(p) { return !!(p && p.trip && Array.isArray(p.legs)); }
+  // One flight of a trip as ordinary one-way preferences (what the search engine and describe() understand).
+  function legPrefs(p, i) {
+    var o = { oneWay: true, lang: p.lang || 'he', invite: p.invite };
+    SHARED.forEach(function (k) { if (p[k] !== undefined) o[k] = p[k]; });
+    var l = p.legs[i] || {};
+    LEG_KEYS.forEach(function (k) { if (l[k] !== undefined) o[k] = l[k]; });
+    return withDefaults(o);
+  }
+  var SHARED_ERR = ['cabin', 'checked', 'carry', 'layover', 'invite'];
+  function validateTrip(p, todayIso, lang) {
+    var L = lang || p.lang; var e = [];
+    var n = (p.legs || []).length;
+    if (n < MIN_LEGS || n > MAX_LEGS) return [msg(L, 'legCount', MIN_LEGS, MAX_LEGS)];
+    check(legPrefs(p, 0), todayIso, L).forEach(function (x) { if (SHARED_ERR.indexOf(x.key) >= 0) e.push(x.text); });
+    for (var i = 0; i < n; i++) {
+      var q = legPrefs(p, i); var pre = msg(L, 'legPrefix', i + 1);
+      check(q, todayIso, L).forEach(function (x) { if (SHARED_ERR.indexOf(x.key) < 0) e.push(pre + x.text); });
+      if (/^\d{4}-\d{2}-\d{2}$/.test(q.outFrom || '') && /^\d{4}-\d{2}-\d{2}$/.test(q.outTo || '') && diff(q.outFrom, q.outTo) > MAX_LEG_RANGE) e.push(pre + msg(L, 'legRange', MAX_LEG_RANGE));
+      if (i > 0) { var prev = p.legs[i - 1].outFrom; if (prev && q.outFrom && q.outFrom < prev) e.push(pre + msg(L, 'legOrder')); }
+    }
+    return e;
+  }
+
   function Writer() { this.bits = []; }
   Writer.prototype.put = function (value, n) {
     if (!(value >= 0 && value < Math.pow(2, n))) throw new Error('value out of range');
@@ -147,7 +191,61 @@
   function putAirline(w, code) { var c = (code || '  ').padEnd(2, ' '); for (var i = 0; i < 2; i++) w.put(AIRLINE_CHARS.indexOf(c[i]), 6); }
   function getAirline(r) { var c = AIRLINE_CHARS[r.get(6)] + AIRLINE_CHARS[r.get(6)]; return c.trim().length === 2 ? c : ''; }
 
+  function putIata(w, c) { for (var k = 0; k < 3; k++) w.put(c.charCodeAt(k) - 65, 5); }
+  function getIata(r) { var c = ''; for (var k = 0; k < 3; k++) c += String.fromCharCode(65 + r.get(5)); return c; }
+  // v5: a flight repeats the previous one's destination as its origin, its passengers and its price limit with
+  // one bit each, and stores the airline and the advanced filters only when set: about 55 bits a flight.
+  function encodeTrip(p) {
+    var w = new Writer(); var s = withDefaults(legPrefs(p, 0));
+    w.put(TRIP_VERSION, 4);
+    for (var i = 0; i < 6; i++) w.put(ALPHA.indexOf(p.invite[i]), 6);
+    w.put(Math.max(0, LANGS.indexOf(p.lang || 'he')), 1);
+    w.put(p.legs.length - 1, 3);
+    w.put(CABINS.indexOf(s.cabin), 2); w.put(s.checkedBags, 2); w.put(s.carryOn, 1); w.put(s.maxLayover, 5); w.put(s.selfTransfer ? 1 : 0, 1);
+    var prev = null;
+    p.legs.forEach(function (_, i) {
+      var l = legPrefs(p, i);
+      if (prev && l.origin === prev.destination) w.put(1, 1); else { if (prev) w.put(0, 1); putIata(w, l.origin); }
+      putIata(w, l.destination);
+      var samePax = prev && l.adults === prev.adults && l.children === prev.children && l.infants === prev.infants;
+      if (prev) w.put(samePax ? 1 : 0, 1);
+      if (!samePax) { w.put(l.adults, 4); w.put(l.children, 4); w.put(l.infants, 3); }
+      w.put(dayNum(l.outFrom), 12); w.put(diff(l.outFrom, l.outTo), 5);
+      w.put(l.airline ? 1 : 0, 1); if (l.airline) putAirline(w, l.airline);
+      w.put(l.outMaxStops, 2);
+      var adv = l.outMaxHours || l.outDepFrom || l.outDepTo !== 24;
+      w.put(adv ? 1 : 0, 1); if (adv) { w.put(l.outMaxHours, 6); w.put(l.outDepFrom, 5); w.put(l.outDepTo, 5); }
+      var samePrice = prev && l.maxPrice === prev.maxPrice;
+      if (prev) w.put(samePrice ? 1 : 0, 1);
+      if (!samePrice) w.put(l.maxPrice, 15);
+      prev = l;
+    });
+    return w.toString();
+  }
+  function decodeTrip(r) {
+    var inv = ''; for (var i = 0; i < 6; i++) inv += ALPHA[r.get(6)];
+    var p = { trip: true, invite: inv, lang: LANGS[r.get(1)] };
+    var n = r.get(3) + 1;
+    p.cabin = CABINS[r.get(2)]; p.checkedBags = r.get(2); p.carryOn = r.get(1); p.maxLayover = r.get(5); p.selfTransfer = r.get(1) === 1;
+    p.legs = [];
+    var prev = null;
+    for (var k = 0; k < n; k++) {
+      var l = {};
+      l.origin = prev && r.get(1) === 1 ? prev.destination : getIata(r);
+      l.destination = getIata(r);
+      if (prev && r.get(1) === 1) { l.adults = prev.adults; l.children = prev.children; l.infants = prev.infants; } else { l.adults = r.get(4); l.children = r.get(4); l.infants = r.get(3); }
+      var of = r.get(12); l.outFrom = isoOf(of); l.outTo = isoOf(of + r.get(5));
+      l.airline = r.get(1) === 1 ? getAirline(r) : '';
+      l.outMaxStops = r.get(2);
+      if (r.get(1) === 1) { l.outMaxHours = r.get(6); l.outDepFrom = r.get(5); l.outDepTo = r.get(5); } else { l.outMaxHours = 0; l.outDepFrom = 0; l.outDepTo = 24; }
+      l.maxPrice = prev && r.get(1) === 1 ? prev.maxPrice : r.get(15);
+      p.legs.push(l); prev = l;
+    }
+    return p;
+  }
+
   function encode(p0) {
+    if (isTrip(p0)) return encodeTrip(p0);
     var p = withDefaults(p0); var w = new Writer();
     w.put(VERSION, 4);
     for (var i = 0; i < 6; i++) w.put(ALPHA.indexOf(p.invite[i]), 6);
@@ -168,9 +266,12 @@
   }
 
   function decode(s) {
-    if (!/^[A-Za-z0-9_-]{20,64}$/.test(s || '')) throw new Error('bad code');
+    if (!/^[A-Za-z0-9_-]{20,200}$/.test(s || '')) throw new Error('bad code');
     var r = new Reader(s);
-    var ver = r.get(4); if (ver < 2 || ver > VERSION) throw new Error('unknown version');
+    var ver = r.get(4);
+    if (ver === TRIP_VERSION) return decodeTrip(r);
+    if (s.length > TG_MAX) throw new Error('bad code');
+    if (ver < 2 || ver > VERSION) throw new Error('unknown version');
     var RB = ver === 2 ? 5 : 11; var DB = ver === 2 ? 11 : 12; // bits of a range length / of a date
     var inv = ''; for (var i = 0; i < 6; i++) inv += ALPHA[r.get(6)];
     var iata = function () { var c = ''; for (var k = 0; k < 3; k++) c += String.fromCharCode(65 + r.get(5)); return c; };
@@ -207,6 +308,7 @@
 
   // Human-readable summary of the preferences, as lines (bold title marked with <b>). Same text in the bot and the page.
   function describe(p0, lang) {
+    if (isTrip(p0)) return describeTrip(p0, lang);
     var p = withDefaults(p0); var en = (lang || p.lang) === 'en';
     var T = function (he, eng) { return en ? eng : he; };
     var stops = function (n) { return n === 0 ? T('ישיר', 'nonstop') : n === 1 ? T('עד עצירה אחת', 'up to 1 stop') : n >= 3 ? T('כל מספר עצירות', 'any stops') : T('עד ' + n + ' עצירות', 'up to ' + n + ' stops'); };
@@ -246,7 +348,29 @@
     return lines;
   }
 
+  var NUMS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣'];
+  // A trip: one short block per flight, then the shared settings.
+  function describeTrip(p, lang) {
+    var en = (lang || p.lang) === 'en'; var L = en ? 'en' : 'he';
+    var T = function (he, eng) { return en ? eng : he; };
+    var lines = ['🧳 <b>' + T('מסע: ' + p.legs.length + ' טיסות', 'Trip: ' + p.legs.length + ' flights') + '</b>'];
+    p.legs.forEach(function (_, i) {
+      var q = legPrefs(p, i); var one = describe(q, L);
+      // one[0] route, one[1] passengers · cabin, one[2] the flight; the last line is the alert.
+      lines.push(NUMS[i] + ' <b>' + placeName(q.origin, L) + ' → ' + placeName(q.destination, L) + '</b>');
+      var pax = one[1].replace(/^👥 /, '').split(' · ')[0];
+      var multi = q.adults + q.children + q.infants > 1;
+      lines.push('   ' + one[2].replace(/^🛫 [^:]+: /, '') + ' · ' + pax + ' · 🔔 ' + T('סף', 'limit') + ' $' + q.maxPrice.toLocaleString('en-US') + (multi ? T(' לנוסע', ' per passenger') : ''));
+    });
+    var s = describe(legPrefs(p, 0), L);
+    var cabin = s[1].split(' · ').slice(1).join(' · ');
+    lines.push('💺 ' + cabin);
+    s.slice(3, -1).forEach(function (x) { lines.push(x); }); // layover, bags, self-transfer
+    return lines;
+  }
+
   return {
+    isTrip: isTrip, legPrefs: legPrefs, MAX_LEGS: MAX_LEGS, MIN_LEGS: MIN_LEGS, TG_MAX: TG_MAX, MAX_CODE: MAX_CODE,
     setPlaces: setPlaces, placeName: placeName, airlineName: airlineName, describe: describe, CITY: CITY,
     encode: encode, decode: decode, validate: validate, withDefaults: withDefaults, LIMITS: LIMITS, CABINS: CABINS, LANGS: LANGS, VERSION: VERSION,
   };
