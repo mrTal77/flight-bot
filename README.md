@@ -35,6 +35,9 @@ Everything runs on free GitHub services: GitHub Actions (searches and the bot) a
 - `logs/runs.csv`: one row per user run, with the number of searches per source that worked / failed / were blocked / were skipped.
 - `logs/messages.csv`: one row per Telegram message sent (time, run, user id, bot or search, kind: summary / alert /
   signup / a command / admin-notice, sent or failed, length). No message text and no chat ids.
+- `logs/clicks.csv`: link clicks per day, user id, site (kayak / kiwi / google / airline / other) and message type.
+  Links in search messages go through a small Cloudflare Worker (`cloudflare/worker.js`) that counts the click and
+  redirects at once; the bot reads the counts every run. Off until `CLICK_URL` and `CLICK_SECRET` are set: see `CLICKS-SETUP.md`.
 - No personal data: users are random ids; errors have links and dates removed; no routes, dates, prices or names.
 - Read it with `/errors` in the bot (owner only; `/errors 72` for 72 hours) or `node tools/logs.js [hours]`.
   Parallel runs append to the same files; `.gitattributes` merges them line by line.
