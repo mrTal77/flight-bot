@@ -19,6 +19,33 @@ const au = 'Go to result details\n16/01\n12:05 – 10:15+1\nBBB City\n-\nAAA Air
 const a = parseKayakCards(au, 'AUD')[0];
 assert.deepEqual([a.legs[0].date, a.legs[0].stops, Math.round(a.legs[0].hours*60), a.price, a.airline], ['2031-01-16',1,910,1127,'Air Canada']);
 console.log('all rule and parser tests passed');
+// Click tracking: links go through the Worker with a signature the Worker accepts; the counts land in logs/clicks.csv
+{
+  const C = require('./lib/clicks');
+  const L = require('./lib/logs');
+  const fs = require('fs'); const px = require('path');
+  const cfg = { url: 'https://clicks.example.workers.dev', secret: 's3cret' };
+  const msg = '<a href="https://www.kayak.com/flights/AAA-BBB/2031-01-01?sort=price_a&amp;fs=stops=0">Kayak</a> · <a href="https://wizzair.com/x">Wizz Air</a>';
+  const out = C.trackLinks(msg, 'u0000000001', 'alert', cfg);
+  const hrefs = [...out.matchAll(/href="([^"]+)"/g)].map((m) => new URL(m[1]));
+  assert.equal(hrefs.length, 2);
+  assert.equal(hrefs[0].origin + hrefs[0].pathname, 'https://clicks.example.workers.dev/c');
+  assert.equal(hrefs[0].searchParams.get('to'), 'https://www.kayak.com/flights/AAA-BBB/2031-01-01?sort=price_a&fs=stops=0');
+  assert.deepEqual(['u', 's', 't'].map((k) => hrefs[0].searchParams.get(k)), ['u0000000001', 'kayak', 'alert']);
+  assert.equal(hrefs[1].searchParams.get('s'), 'airline');
+  assert.equal(hrefs[0].searchParams.get('k'), C.sign('s3cret', `u0000000001|kayak|alert|${hrefs[0].searchParams.get('to')}`));
+  assert.equal(C.trackLinks(msg, 'u0000000001', 'alert', { url: '', secret: '' }), msg); // off until set up
+  const dir = fs.mkdtempSync(px.join(require('os').tmpdir(), 'clicks-'));
+  const today = new Date().toISOString().slice(0, 10);
+  C.mergeClicks({ [`${today}|u0000000001|kayak|alert`]: 2, [`${today}|u0000000002|google|summary`]: 1, bad: 5 }, dir);
+  C.mergeClicks({ [`${today}|u0000000001|kayak|alert`]: 3 }, dir);
+  const rows = L.readCsv('clicks.csv', dir);
+  assert.deepEqual(rows.map((r) => [r.user, r.site, r.clicks]), [['u0000000001', 'kayak', '3'], ['u0000000002', 'google', '1']]);
+  assert.ok(!fs.readFileSync(px.join(dir, 'clicks.csv'), 'utf8').includes('http'));
+  assert.equal(C.mergeClicks({ [`${today}|u0000000001|kayak|alert`]: 3 }, dir), 0); // nothing new: file untouched
+  console.log('click tracking tests passed');
+}
+
 
 // pickDiverse: one option per trip type first, then different outbound dates
 {
@@ -268,31 +295,4 @@ console.log('kayak filter test passed');
   const sm = L.summarize(24, Date.now(), dir);
   assert.ok(sm.includes('✉️ הודעות שנשלחו: 4 · סיכומים 1 · התראות 1 · תשובות בצ׳אט 1'), sm);
   console.log('message log tests passed');
-}
-
-// Click tracking: links go through the Worker with a signature the Worker accepts; the counts land in logs/clicks.csv
-{
-  const C = require('./lib/clicks');
-  const L = require('./lib/logs');
-  const fs = require('fs'); const px = require('path');
-  const cfg = { url: 'https://clicks.example.workers.dev', secret: 's3cret' };
-  const msg = '<a href="https://www.kayak.com/flights/AAA-BBB/2031-01-01?sort=price_a&amp;fs=stops=0">Kayak</a> · <a href="https://wizzair.com/x">Wizz Air</a>';
-  const out = C.trackLinks(msg, 'u0000000001', 'alert', cfg);
-  const hrefs = [...out.matchAll(/href="([^"]+)"/g)].map((m) => new URL(m[1]));
-  assert.equal(hrefs.length, 2);
-  assert.equal(hrefs[0].origin + hrefs[0].pathname, 'https://clicks.example.workers.dev/c');
-  assert.equal(hrefs[0].searchParams.get('to'), 'https://www.kayak.com/flights/AAA-BBB/2031-01-01?sort=price_a&fs=stops=0');
-  assert.deepEqual(['u', 's', 't'].map((k) => hrefs[0].searchParams.get(k)), ['u0000000001', 'kayak', 'alert']);
-  assert.equal(hrefs[1].searchParams.get('s'), 'airline');
-  assert.equal(hrefs[0].searchParams.get('k'), C.sign('s3cret', `u0000000001|kayak|alert|${hrefs[0].searchParams.get('to')}`));
-  assert.equal(C.trackLinks(msg, 'u0000000001', 'alert', { url: '', secret: '' }), msg); // off until set up
-  const dir = fs.mkdtempSync(px.join(require('os').tmpdir(), 'clicks-'));
-  const today = new Date().toISOString().slice(0, 10);
-  C.mergeClicks({ [`${today}|u0000000001|kayak|alert`]: 2, [`${today}|u0000000002|google|summary`]: 1, bad: 5 }, dir);
-  C.mergeClicks({ [`${today}|u0000000001|kayak|alert`]: 3 }, dir);
-  const rows = L.readCsv('clicks.csv', dir);
-  assert.deepEqual(rows.map((r) => [r.user, r.site, r.clicks]), [['u0000000001', 'kayak', '3'], ['u0000000002', 'google', '1']]);
-  assert.ok(!fs.readFileSync(px.join(dir, 'clicks.csv'), 'utf8').includes('http'));
-  assert.equal(C.mergeClicks({ [`${today}|u0000000001|kayak|alert`]: 3 }, dir), 0); // nothing new: file untouched
-  console.log('click tracking tests passed');
 }
