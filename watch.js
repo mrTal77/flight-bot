@@ -763,16 +763,27 @@ async function getRates() {
 }
 
 const STARTED = Date.now();
+// Israel local date and minutes since midnight (summer and winter time handled by the time zone database).
+function israelClock(d) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+    .formatToParts(d).map((x) => [x.type, x.value]));
+  return { day: `${parts.year}-${parts.month}-${parts.day}`, minutes: Number(parts.hour) * 60 + Number(parts.minute) };
+}
 async function main() {
   const state = loadState();
-  const now = new Date();
-  // At most one daily summary per user in 20 hours, whoever started the run (cron-job.org and GitHub's own
-  // schedule can both start one). A test alert (TEST_ALERT) or FORCE_SUMMARY=1 always sends it.
-  const forceSummary = process.env.TEST_ALERT === '1' || process.env.FORCE_SUMMARY === '1';
-  if (SUMMARY && !forceSummary && state.lastSummaryAt && (now - new Date(state.lastSummaryAt)) / 36e5 < 20) {
-    SUMMARY = false;
-    console.log('daily summary already sent in the last 20 hours: running as a check');
+  const now = process.env.FAKE_NOW && DRY ? new Date(process.env.FAKE_NOW) : new Date(); // FAKE_NOW: dry-run tests only
+  // The daily summary: once per Israel calendar day, and only in the evening window (from 20:45 Israel time;
+  // the summary is due at 21:00). A summary run at another hour (e.g. GitHub's schedule arriving hours late)
+  // or a second one the same day runs as a plain check. Test runs (TEST_ALERT, FORCE_SUMMARY) always send,
+  // are marked 🧪, and do not count as the day's summary.
+  const firstSearch = process.env.FIRST_SEARCH === '1'; // right after a sign-up or a settings change: results now
+  const forceSummary = process.env.TEST_ALERT === '1' || process.env.FORCE_SUMMARY === '1' || firstSearch;
+  const il = israelClock(now);
+  if (SUMMARY && !forceSummary) {
+    if (il.minutes < (CONFIG.summaryFromMinute ?? 20 * 60 + 45)) { SUMMARY = false; console.log('summary run outside the evening window: running as a check'); }
+    else if (state.lastSummaryDay === il.day) { SUMMARY = false; console.log('daily summary already sent today: running as a check'); }
   }
+  const markSummarySent = () => { if (!DRY && !forceSummary) { state.lastSummaryDay = il.day; state.lastSummaryAt = now.toISOString(); } };
   let rates;
   try { rates = await getRates(); state.rates = rates; } catch (e) {
     if (!state.rates) throw e;
@@ -879,7 +890,7 @@ async function main() {
     if (state.failStreak === 6 && OWNER) await telegram('⚠️ בוט הטיסות לא הצליח לקרוא מחירים 6 פעמים ברצף. אני ממשיך לנסות.', 'warning');
     writeLogs('no prices', offers.length, STARTED);
     saveState(state);
-    if (SUMMARY) { await telegram('🛫 סיכום יומי: לא הצלחתי לקרוא מחירים היום. אנסה שוב בהרצה הבאה.', 'summary'); if (!DRY) state.lastSummaryAt = now.toISOString(); saveState(state); }
+    if (SUMMARY) { await telegram(`${forceSummary && !firstSearch ? '🧪 <i>בדיקה, לא הסיכום היומי</i>\n' : ''}🛫 ${firstSearch ? 'החיפוש הראשון' : 'סיכום יומי'}: לא הצלחתי לקרוא מחירים. אנסה שוב בהרצה הבאה.`, firstSearch ? 'first-results' : forceSummary ? 'test-summary' : 'summary'); markSummarySent(); saveState(state); }
     console.log('no prices found');
     return;
   }
@@ -926,7 +937,8 @@ async function main() {
       .map((s) => [s, Math.min(...offers.filter((o) => o.kind === 'rt' && bagReq(o) && o.source === s).map((o) => o.usd))])
       .sort((a, b) => a[1] - b[1]).map(([s, u]) => `${s} ${fmtBoth(u)}`).join(' · ');
     await telegram([
-      `☀️ <b>סיכום יומי</b> · ${title}`,
+      ...(forceSummary && !firstSearch ? ['🧪 <i>בדיקה, לא הסיכום היומי</i>'] : []),
+      firstSearch ? `🔎 <b>תוצאות ראשונות</b> · ${title}` : `🌙 <b>סיכום יומי</b> · ${title}`,
       rules, '',
       bestBag ? `הזול ביותר${PAX > 1 ? ' (לנוסע)' : ''}: ${priceTag(bestBag)} · הסף: ${fmtBoth(CONFIG.maxPriceUsd)}` : `לא נמצא מחיר מתאים · הסף: ${fmtBoth(CONFIG.maxPriceUsd)}`,
       ...(ILS_PER_USD ? [`💱 שער היום: $1 = ₪${ILS_PER_USD.toFixed(2)}`] : []), '',
@@ -937,8 +949,8 @@ async function main() {
       ...(kayakLinks ? [kayakLinks] : []),
       ...(OWNER && errors.length ? [`⚠️ ${errors.length} חיפושים נכשלו (רק אתה רואה את זה · /errors)`] : []),
       '', '<i>/status הגדרות · /stop הפסקה</i>',
-    ].join('\n'), 'summary');
-    state.lastSummaryAt = now.toISOString();
+    ].join('\n'), firstSearch ? 'first-results' : forceSummary ? 'test-summary' : 'summary');
+    markSummarySent();
   }
   delete state.duels; // history of the retired algorithm B
   writeLogs('prices', offers.length, STARTED);
@@ -953,4 +965,4 @@ if (require.main === module) {
     process.exit(1);
   });
 }
-module.exports = { preferredFirst, optionsText, flies, scrub, tracked, appendCsv, googleTfs, googleUrl, parseGoogleLabel, googleTasks, lowCostLinks, retryOnce, bagState, configFor, slotFrom, bagReq, bagOk, kayakUrlForTest: kayakUrl, pickDiverse, tripType, setIlsRate: (r) => { ILS_PER_USD = r; }, pairOk, legOkOut, legOkRet, parseKayakCards, candText, pickDistinct, searchCenters };
+module.exports = { israelClock, preferredFirst, optionsText, flies, scrub, tracked, appendCsv, googleTfs, googleUrl, parseGoogleLabel, googleTasks, lowCostLinks, retryOnce, bagState, configFor, slotFrom, bagReq, bagOk, kayakUrlForTest: kayakUrl, pickDiverse, tripType, setIlsRate: (r) => { ILS_PER_USD = r; }, pairOk, legOkOut, legOkRet, parseKayakCards, candText, pickDistinct, searchCenters };

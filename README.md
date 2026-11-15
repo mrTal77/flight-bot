@@ -12,7 +12,7 @@ Everything runs on free GitHub services: GitHub Actions (searches and the bot) a
   (`docs/codec.js`) and opens `t.me/<bot>?start=<code>`. Sign-up needs an invite link (`?i=<invite>`).
 - **Bot** (`bot.js`, every 5 minutes): reads new Telegram messages, checks the invite, validates the preferences,
   stores the user and starts a first search. Commands: `/status`, `/edit` (link to the user's own form, prefilled; saving it replaces their settings), `/price`, `/dest`, `/out`, `/back` (change one setting in the chat), `/lang`, `/stop` (deletes the user's data), `/help`. One user per Telegram chat: any update replaces that user's settings.
-- **Search** (`watch.js`, every 4 hours + a daily summary): one job per user, in parallel. Sources:
+- **Search** (`watch.js`, every 4 hours + one daily summary at 21:00 Israel time; a summary run outside 20:45–24:00 or a second one the same day runs as a plain check; a new user's first results come right away): one job per user, in parallel. Sources:
   - Kayak in a headless browser, Israel (with Kayak's checked-bag filter) and Australia (prices in AUD, converted;
     its bag filter has no effect, so bags show as unknown), "±3 days" grids: one-way outbound, one-way returns, and round trips.
   - Kiwi.com's public MCP server (`https://mcp.kiwi.com`, free): one-way, returns, round trips, and single tickets

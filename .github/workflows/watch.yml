@@ -4,11 +4,11 @@ name: flight-watch
 on:
   schedule:
     - cron: "17 2-22/4 * * *"   # every 4 hours (UTC)
-    - cron: "41 5 * * *"     # daily summary, ~07:41/08:41 Israel time
+    - cron: "17 19 * * *"    # daily summary backup: 21:17 Israel (winter) / 22:17 (summer); cron-job.org sends it at 21:00
   workflow_dispatch:
     inputs:
       mode:
-        description: "check | summary (at most one a day per user) | force-summary | test-alert"
+        description: "check | summary (one a day, evening) | first (new user's first results) | force-summary (test) | test-alert"
         default: "summary"
       user:
         description: "empty = all users · admins = only the admin (for testing; nobody else gets messages) · or one user id"
@@ -20,7 +20,7 @@ permissions:
 # One full search at a time (cron-job.org and GitHub's own schedule may both start one); a newer waiting run
 # replaces an older waiting one. A single user's first search has its own group and is not held up.
 concurrency:
-  group: flight-watch-${{ github.event.inputs.user || 'all' }}
+  group: flight-watch-${{ (!github.event.inputs.user || github.event.inputs.user == 'admins') && 'all' || github.event.inputs.user }}
   cancel-in-progress: false
 
 jobs:
@@ -40,7 +40,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ONLY: ${{ github.event.inputs.user }}
-          MODE: ${{ github.event.inputs.mode || (github.event.schedule == '41 5 * * *' && 'summary' || 'check') }}
+          MODE: ${{ github.event.inputs.mode || (github.event.schedule == '17 19 * * *' && 'summary' || 'check') }}
         run: |
           echo "users=$(node lib/list-users.js "$ONLY")" >> "$GITHUB_OUTPUT"
           echo "mode=$MODE" >> "$GITHUB_OUTPUT"
@@ -92,6 +92,7 @@ jobs:
             summary)    node watch.js --user "$USER_ID" --summary ;;
             test-alert) TEST_ALERT=1 MAX_PRICE_USD=99999 node watch.js --user "$USER_ID" --summary ;;
             force-summary) FORCE_SUMMARY=1 node watch.js --user "$USER_ID" --summary ;;
+            first)      FIRST_SEARCH=1 node watch.js --user "$USER_ID" --summary ;;
             *)          node watch.js --user "$USER_ID" ;;
           esac
 

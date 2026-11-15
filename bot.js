@@ -51,7 +51,7 @@ const TX = {
     badInvite: '⚠️ קוד ההזמנה לא תקף. בקש קישור הרשמה חדש.',
     problems: '⚠️ יש בעיה בפרטים:', fillAgain: 'מלא את הטופס שוב.', full: '😕 הבוט מלא כרגע. נסה שוב בהמשך.',
     registered: '✅ <b>נרשמת בהצלחה!</b>', updated: '✅ <b>ההגדרות עודכנו!</b> (ההגדרות הקודמות הוחלפו)',
-    firstSearch: 'החיפוש מתחיל עכשיו, והתוצאות יגיעו לכאן בעוד כ-10 דקות. אחר כך אבדוק כל כמה שעות ואשלח סיכום פעם ביום.',
+    firstSearch: 'החיפוש מתחיל עכשיו, והתוצאות יגיעו לכאן בעוד כ-10 דקות. אחר כך אבדוק כל כמה שעות ואשלח סיכום פעם ביום ב-21:00.',
     stopped: '🛑 החיפוש הופסק והפרטים שלך נמחקו. אפשר להירשם שוב בכל זמן דרך קישור ההרשמה.',
     best: '💰 הזול ביותר בבדיקה האחרונה: ${a}', noRunYet: '⏳ עוד לא הסתיימה בדיקה.',
     editLink: '✏️ <b>עדכון הגדרות</b>\nהקישור פותח את הטופס עם כל ההגדרות הנוכחיות שלך. משנים מה שרוצים, לוחצים "שמירת השינויים", וההגדרות החדשות מחליפות את הקודמות.\n\n<a href="{a}">פתיחת הטופס שלי</a>',
@@ -86,7 +86,7 @@ const TX = {
     badInvite: '⚠️ The invite code is not valid. Ask for a new sign-up link.',
     problems: '⚠️ There is a problem with the details:', fillAgain: 'Please fill in the form again.', full: '😕 The bot is full right now. Please try again later.',
     registered: '✅ <b>You are signed up!</b>', updated: '✅ <b>Settings updated!</b> (the previous settings were replaced)',
-    firstSearch: 'The search starts now; results arrive here in about 10 minutes. After that I check every few hours and send a daily summary.',
+    firstSearch: 'The search starts now; results arrive here in about 10 minutes. After that I check every few hours and send a daily summary at 21:00 (Israel time).',
     stopped: '🛑 Search stopped and your details were deleted. You can sign up again any time with the sign-up link.',
     best: '💰 Best price in the last check: ${a}', noRunYet: '⏳ No check has finished yet.',
     editLink: '✏️ <b>Update settings</b>\nThe link opens the form with all your current settings. Change what you want, tap "Save changes", and the new settings replace the old ones.\n\n<a href="{a}">Open my form</a>',
@@ -140,7 +140,7 @@ async function dispatchSearch(userId) {
   const res = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/watch.yml/dispatches`, {
     method: 'POST',
     headers: { authorization: `Bearer ${gh}`, accept: 'application/vnd.github+json', 'content-type': 'application/json' },
-    body: JSON.stringify({ ref: process.env.GITHUB_REF_NAME || 'main', inputs: { mode: 'summary', user: userId } }),
+    body: JSON.stringify({ ref: process.env.GITHUB_REF_NAME || 'main', inputs: { mode: 'first', user: userId } }),
   });
   return res.status === 204;
 }
