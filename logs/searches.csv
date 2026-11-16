@@ -168,3 +168,10 @@ time_utc,run,user,mode,source,market,kind,status,attempts,seconds,results,error
 2026-11-16T09:42:51Z,43841916757,u7c851ff58a,check,kayak,www.he.kayak.com,rt,blocked,2,94,0,blocked: Kayak security check
 2026-11-16T09:42:51Z,43841916757,u7c851ff58a,check,kayak,www.he.kayak.com,out,blocked,2,94,0,blocked: Kayak security check
 2026-11-16T09:42:51Z,43841916757,u7c851ff58a,check,kayak,www.kayak.com.au,ret,blocked,2,94,0,blocked: Kayak security check
+2026-11-16T20:28:37Z,43950025679,u7c851ff58a,check,kayak,www.he.kayak.com,ret,blocked,1,7,0,blocked: Kayak security check
+2026-11-16T20:28:37Z,43950025679,u7c851ff58a,check,kayak,www.kayak.com.au,out,blocked,1,6,0,blocked: Kayak security check
+2026-11-16T20:28:37Z,43950025679,u7c851ff58a,check,kayak,www.he.kayak.com,out,failed,2,21,0,page.evaluate: Execution context was destroyed most likely because of a navigation
+2026-11-16T20:28:37Z,43950025679,u7c851ff58a,check,kayak,www.he.kayak.com,out,blocked,2,21,0,blocked: Kayak security check
+2026-11-16T20:28:37Z,43950025679,u7c851ff58a,check,kayak,www.he.kayak.com,ret,failed,2,21,0,page.evaluate: Execution context was destroyed most likely because of a navigation
+2026-11-16T20:28:37Z,43950025679,u7c851ff58a,check,kayak,www.he.kayak.com,rt,blocked,2,22,0,blocked: Kayak security check
+2026-11-16T20:28:37Z,43950025679,u7c851ff58a,check,kayak,www.he.kayak.com,rt,blocked,2,22,0,blocked: Kayak security check
