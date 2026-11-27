@@ -15,8 +15,13 @@ const store = require('./lib/store');
 const codec = require('./docs/codec.js');
 
 const CONFIG = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
+// Sign-up rules (config.json "signup"). mode: "open" = anyone may sign up; "invite" = only with an invite code;
+// "closed" = new people only join the waitlist. Above maxUsers, or after maxNewPerDay new users in a day (UTC),
+// new people join the waitlist and are let in, in order, as soon as there is room.
+const SIGNUP = { mode: 'invite', maxUsers: CONFIG.maxUsers || 10, maxNewPerDay: 0, maxWaitlist: 500, maxChangesPerDay: 10, maxMessagesPerRun: 10, ...(CONFIG.signup || {}) };
+const inviteOf = (code) => (code ? (CONFIG.invites || []).find((i) => i.sha256 === store.sha256(code)) : null);
 const argv = process.argv.slice(2);
-const DRY = argv.includes('--dry');
+let DRY = argv.includes('--dry');
 const updatesFile = argv.includes('--updates') ? argv[argv.indexOf('--updates') + 1] : null;
 const TOKEN = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
 const OWNER_CHAT = (process.env.TELEGRAM_CHAT_ID || '').trim(); // the bot owner (admin)
@@ -44,7 +49,7 @@ const TX = {
       '/lang en · English',
       '/stop · הפסקת החיפוש ומחיקת הפרטים שלך',
     ].join('\n'),
-    ownerHelp: '/users · רשימת המשתמשים (רק לך)\n/errors · יומן החיפושים שנכשלו (רק לך; /errors 72 ל-72 שעות)',
+    ownerHelp: '<b>רק לך:</b>\n/dashboard · מצב הבוט: משתמשים, הרשמות, רשימת המתנה\n/users · רשימת המשתמשים\n/waitlist · רשימת ההמתנה · /admit 3 · הכנסת 3 הראשונים בתור (גם מעל המגבלות)\n/block 4 · חסימת משתמש 4 ברשימה ומחיקתו · /blocked · /unblock 1\n/errors · יומן החיפושים שנכשלו (/errors 72 ל-72 שעות)',
     notRegistered: '👋 כדי להירשם צריך לפתוח את קישור ההרשמה שקיבלת, למלא את פרטי הטיסה וללחוץ "אישרתי".',
     alreadyIn: '👋 אתה כבר רשום.',
     badCode: '⚠️ הקוד בקישור לא תקין. נסה למלא את הטופס שוב.',
@@ -69,6 +74,28 @@ const TX = {
     noLeg: 'אין במסע טיסה מספר {a}.',
     bestLeg: '💰 הזול ביותר בבדיקה האחרונה:',
     paused: '⏸️ החיפוש שלך מושהה כרגע, ולא יישלחו התראות או סיכומים. ההגדרות שלך שמורות.',
+    welcome: [
+      '✈️ <b>ברוכים הבאים!</b>',
+      'אני עוקב בשבילכם אחרי מחירי טיסות, בחינם, ושולח הודעה כשכרטיס מתאים יורד מתחת לסף שבחרתם.',
+      '',
+      '<b>איך מתחילים:</b>',
+      '1. לוחצים על הכפתור למטה וממלאים איזו טיסה מחפשים (דקה אחת).',
+      '2. לוחצים "אישרתי" וחוזרים לכאן.',
+      '3. אני מאשר תוך כמה דקות, והתוצאות הראשונות מגיעות תוך כ-20 דקות.',
+      '',
+      'ℹ️ אני עונה תוך כמה דקות, לא מיד. הפרטים נשמרים מוצפנים, ו-/stop מוחק אותם.',
+    ].join('\n'),
+    welcomeInvite: '👋 כרגע ההרשמה היא בהזמנה בלבד. אם קיבלתם קישור הרשמה, פתחו אותו. אפשר גם למלא את הטופס ולהיכנס לרשימת ההמתנה.',
+    welcomeWait: '⏳ כרגע יש רשימת המתנה. אחרי מילוי הטופס תיכנסו לתור, ואשלח הודעה ברגע שיתפנה מקום.',
+    formBtn: '✈️ למילוי הטופס', editBtn: '✏️ פתיחת הטופס שלי',
+    waitlisted: '⏳ <b>נכנסתם לרשימת ההמתנה</b> (מקום {a} בתור).\nהבוט מלא כרגע. ההגדרות שלכם שמורות, ואשלח הודעה ברגע שתיכנסו והחיפוש יתחיל. אפשר לעדכן את הטופס בינתיים, ו-/stop מוציא אתכם מהתור.',
+    waitStatus: '⏳ אתם ברשימת ההמתנה, מקום {a} בתור. אשלח הודעה ברגע שיתפנה מקום.',
+    waitFull: '😕 הבוט ורשימת ההמתנה מלאים כרגע. נסו שוב בעוד כמה ימים.',
+    waitLeft: '👋 יצאתם מרשימת ההמתנה והפרטים נמחקו.',
+    admitted: '🎉 <b>התפנה מקום, ונרשמתם!</b>',
+    admitExpired: '⏳ התפנה מקום, אבל התאריכים שבחרתם כבר עברו. מלאו את הטופס שוב עם תאריכים חדשים:',
+    tooManyChanges: '✋ היום כבר עדכנתם את ההגדרות הרבה פעמים. אפשר לעדכן שוב מחר.',
+    tooManyMessages: '✋ הגיעו הרבה הודעות בבת אחת. אני עונה על הראשונות, ועל השאר לא. נסו שוב בעוד כמה דקות.',
   },
   en: {
     help: [
@@ -85,7 +112,7 @@ const TX = {
       '/lang he · עברית',
       '/stop · stop searching and delete your details',
     ].join('\n'),
-    ownerHelp: '/users · list of users (only you)\n/errors · log of failed searches (only you; /errors 72 for 72 hours)',
+    ownerHelp: '<b>Only you:</b>\n/dashboard · bot status: users, sign-ups, waitlist\n/users · list of users\n/waitlist · the waitlist · /admit 3 · let the first 3 in (even above the limits)\n/block 4 · block user 4 of the list and delete them · /blocked · /unblock 1\n/errors · log of failed searches (/errors 72 for 72 hours)',
     notRegistered: '👋 To sign up, open the sign-up link you received, fill in your flight and tap "Confirm".',
     alreadyIn: '👋 You are already signed up.',
     badCode: '⚠️ The code in the link is not valid. Please fill in the form again.',
@@ -110,6 +137,28 @@ const TX = {
     noLeg: 'There is no flight number {a} in your trip.',
     bestLeg: '💰 Best prices in the last check:',
     paused: '⏸️ Your search is paused right now: no alerts or summaries. Your settings are saved.',
+    welcome: [
+      '✈️ <b>Welcome!</b>',
+      'I watch flight prices for you, for free, and message you when a matching ticket drops below your price limit.',
+      '',
+      '<b>How to start:</b>',
+      '1. Tap the button below and fill in the flight you are looking for (1 minute).',
+      '2. Tap "Confirm" and come back here.',
+      '3. I confirm within a few minutes, and the first results arrive in about 20 minutes.',
+      '',
+      'ℹ️ I answer within a few minutes, not instantly. Your details are stored encrypted, and /stop deletes them.',
+    ].join('\n'),
+    welcomeInvite: '👋 Sign-up is by invitation right now. If you got a sign-up link, open it. You can also fill in the form to join the waitlist.',
+    welcomeWait: '⏳ There is a waitlist right now. Fill in the form to get in line, and I will message you as soon as there is room.',
+    formBtn: '✈️ Open the form', editBtn: '✏️ Open my form',
+    waitlisted: '⏳ <b>You are on the waitlist</b> (number {a} in line).\nThe bot is full right now. Your settings are saved, and I will message you as soon as you are in and the search starts. You can update the form meanwhile; /stop takes you off the list.',
+    waitStatus: '⏳ You are on the waitlist, number {a} in line. I will message you as soon as there is room.',
+    waitFull: '😕 The bot and its waitlist are full right now. Please try again in a few days.',
+    waitLeft: '👋 You left the waitlist and your details were deleted.',
+    admitted: '🎉 <b>A place opened up, and you are signed up!</b>',
+    admitExpired: '⏳ A place opened up, but your dates have already passed. Please fill in the form again with new dates:',
+    tooManyChanges: '✋ You changed your settings many times today. You can change them again tomorrow.',
+    tooManyMessages: '✋ Many messages arrived at once. I answered the first ones and skipped the rest. Please try again in a few minutes.',
   },
 };
 const tx = (lang, key, a) => (TX[lang === 'en' ? 'en' : 'he'][key] || '').split('{a}').join(a == null ? '' : a);
@@ -145,14 +194,26 @@ async function tg(method, body) {
 // Every message sent is counted in logs/messages.csv (user id and kind only; no text, no chat id).
 const MESSAGES = [];
 let CURRENT = { type: 'other', user: '-' }; // what the message being answered is, and whose
-async function reply(chatId, text, kind) {
+const SENT = []; // dry runs and tests: what would have been sent
+// button: [text, url] shows one link button under the message.
+async function reply(chatId, text, kind, button) {
   const row = { at: new Date().toISOString().slice(0, 19) + 'Z', user: kind === 'admin-notice' ? 'admin' : CURRENT.user, sender: 'bot', type: kind || CURRENT.type, chars: text.length };
-  if (DRY) { console.log(`--- reply to ${chatId} ---\n${text}\n---`); MESSAGES.push({ ...row, status: 'sent' }); return; }
-  try { await tg('sendMessage', { chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true }); } catch (e) {
+  const markup = button ? { inline_keyboard: [[{ text: button[0], url: button[1] }]] } : undefined;
+  if (DRY) { SENT.push({ chatId, text, button }); if (!QUIET) console.log(`--- reply to ${chatId} ---\n${text}${button ? `\n[${button[0]}] ${button[1]}` : ''}\n---`); MESSAGES.push({ ...row, status: 'sent' }); return; }
+  try { await tg('sendMessage', { chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true, reply_markup: markup }); } catch (e) {
     MESSAGES.push({ ...row, status: 'failed' }); throw e;
   }
   MESSAGES.push({ ...row, status: 'sent' });
 }
+// A long list (the owner's /users, /waitlist) split into messages under Telegram's 4096-character limit.
+async function replyLong(chatId, head, blocks) {
+  const msgs = []; let cur = head;
+  for (const b of blocks) { if (cur.length + b.length + 2 > 3800) { msgs.push(cur); cur = b; } else cur += (cur ? '\n\n' : '') + b; }
+  msgs.push(cur);
+  for (const m of msgs) await reply(chatId, m);
+}
+let QUIET = false;
+const formUrl = (lang, extra) => `${CONFIG.pagesUrl}?lang=${lang === 'en' ? 'en' : 'he'}${extra || ''}`;
 async function notifyOwner(text) { if (OWNER_CHAT) { try { await reply(OWNER_CHAT, text, 'admin-notice'); } catch (e) { console.log('owner notice failed'); } } }
 function saveMessageLog() { if (!DRY) require('./lib/logs').logMessages(MESSAGES); }
 
@@ -223,7 +284,11 @@ const ALIASES = {
   start: ['start'], stop: ['stop', 'עצור', 'הפסק'], status: ['status', 'סטטוס', 'מצב'], edit: ['edit', 'עריכה', 'עדכון', 'טופס'],
   price: ['price', 'מחיר', 'סף'], dest: ['dest', 'destination', 'יעד'], out: ['out', 'הלוך'], back: ['back', 'return', 'חזור'],
   lang: ['lang', 'language', 'שפה'], help: ['help', 'עזרה'], users: ['users', 'משתמשים'], errors: ['errors', 'שגיאות'],
+  dashboard: ['dashboard', 'stats', 'דשבורד', 'סטטיסטיקה'], waitlist: ['waitlist', 'queue', 'המתנה', 'תור'], admit: ['admit', 'הכנס'],
+  block: ['block', 'חסום'], blocked: ['blocked', 'חסומים'], unblock: ['unblock', 'שחרר'],
 };
+const OWNER_CMDS = ['errors', 'users', 'dashboard', 'waitlist', 'admit', 'block', 'blocked', 'unblock'];
+const ownerCommand = (cmd) => OWNER_CMDS.includes(cmd);
 function parseCommand(text) {
   const m = text.match(/^\/?([^\s@]+)(?:@\S+)?\s*([\s\S]*)$/);
   if (!m) return null;
@@ -232,12 +297,64 @@ function parseCommand(text) {
   return null;
 }
 
+// ---------- open sign-up: limits, waitlist, blocked chats ----------
+// db.waitlist: [{ chatId, name, prefs, invite, at }] in arrival order (encrypted with the users file).
+// db.blocked:  [{ chatId, name, at }] chats the owner blocked: everything they send is ignored.
+const isOwnerChat = (chatId) => !!OWNER_CHAT && String(chatId) === OWNER_CHAT;
+const others = (db) => Object.values(db.users).filter((u) => !u.owner);
+const newToday = (db, todayIso) => others(db).filter((u) => (u.createdAt || '').slice(0, 10) === todayIso).length;
+// Why a new person cannot get in right now ('closed' | 'full' | 'daily'), or null when there is room.
+function noRoom(db, todayIso) {
+  if (SIGNUP.mode === 'closed') return 'closed';
+  if (others(db).length >= SIGNUP.maxUsers) return 'full';
+  if (SIGNUP.maxNewPerDay && newToday(db, todayIso) >= SIGNUP.maxNewPerDay) return 'daily';
+  return null;
+}
+const isBlocked = (db, chatId) => (db.blocked || []).some((b) => b.chatId === String(chatId));
+const waitPos = (db, chatId) => (db.waitlist || []).findIndex((w) => w.chatId === String(chatId)) + 1;
+// Each user may change their settings maxChangesPerDay times a day (every change starts a new search).
+function changeAllowed(user, todayIso) {
+  if (user.owner || !SIGNUP.maxChangesPerDay) return true;
+  const c = user.changes && user.changes.day === todayIso ? user.changes : { day: todayIso, n: 0 };
+  if (c.n >= SIGNUP.maxChangesPerDay) return false;
+  user.changes = { day: todayIso, n: c.n + 1 };
+  return true;
+}
+function addUser(db, chatId, name, prefs, invite, createdAt) {
+  const user = { id: store.newUserId(), chatId: String(chatId), createdAt: createdAt || new Date().toISOString() };
+  user.name = name; user.prefs = prefs; user.owner = isOwnerChat(chatId); user.updatedAt = new Date().toISOString();
+  const inv = inviteOf(invite);
+  if (inv) { user.invite = invite; user.source = inv.label; } // kept (encrypted) for the /edit link; the label shows in /users
+  db.users[user.id] = user;
+  return user;
+}
+// Let people in from the waitlist, in order, while there is room (or `force` people regardless of the limits).
+async function admitWaiting(db, todayIso, toDispatch, force = 0) {
+  let admitted = 0;
+  while ((db.waitlist || []).length && (force ? admitted < force : !noRoom(db, todayIso))) {
+    const w = db.waitlist.shift();
+    const L = w.prefs.lang || 'he';
+    CURRENT = { type: 'admitted', user: '-' };
+    if (codec.validate({ ...w.prefs, invite: w.invite || 'xxxxxx' }, todayIso, L).length) { // dates passed while waiting
+      try { await reply(w.chatId, tx(L, 'admitExpired'), 'admit-expired', [tx(L, 'formBtn'), formUrl(L)]); } catch {}
+      continue;
+    }
+    const user = addUser(db, w.chatId, w.name, w.prefs, w.invite);
+    CURRENT.user = user.id; admitted++;
+    if (!isPaused(user)) toDispatch.push(user.id);
+    try { await reply(w.chatId, `${tx(L, 'admitted')}\n\n${prefsText(w.prefs)}\n\n${tx(L, 'firstSearch')}\n\n${tx(L, 'help')}`, 'admitted'); } catch {}
+  }
+  if (admitted) await notifyOwner(`🎟️ ${admitted} נכנסו מרשימת ההמתנה. בתור נשארו ${(db.waitlist || []).length}. משתמשים: ${Object.keys(db.users).length}`);
+  return admitted;
+}
+
 // ---------- applying a change from the chat ----------
 // The new settings replace the user's settings; the search restarts (fresh state if the route or dates changed).
 async function saveChange(db, user, newPrefs, todayIso, toDispatch, resetSearch) {
   const lang = newPrefs.lang || 'he';
   const errs = codec.validate({ ...newPrefs, invite: user.invite || 'xxxxxx' }, todayIso, lang);
   if (errs.length) { await reply(user.chatId, `${tx(lang, 'problems')}\n• ${errs.map(esc).join('\n• ')}`); return; }
+  if (!changeAllowed(user, todayIso)) { await reply(user.chatId, tx(lang, 'tooManyChanges')); return; }
   user.prefs = newPrefs; user.updatedAt = new Date().toISOString();
   db.users[user.id] = user;
   if (resetSearch) store.deleteState(user.id);
@@ -251,10 +368,92 @@ async function saveChange(db, user, newPrefs, todayIso, toDispatch, resetSearch)
   if (!user.owner) await notifyOwner(`✏️ <b>משתמש עדכן הגדרות</b>: ${esc(user.name) || 'ללא שם'}\n${userLine(user)}`);
 }
 
+// ---------- owner-only commands ----------
+const sortedUsers = (db) => Object.values(db.users).sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+async function ownerCmd(db, chatId, c, todayIso, toDispatch) {
+  const repo = process.env.GITHUB_REPOSITORY || 'mrTal77/flight-bot';
+  const n = Math.max(1, Math.min(50, parseInt(c.arg, 10) || 1));
+  switch (c.cmd) {
+    case 'errors': {
+      const hours = Math.min(24 * 14, Number(c.arg) || 24);
+      await reply(chatId, `${require('./lib/logs').summarize(hours)}\n\nהטבלאות המלאות: <a href="https://github.com/${repo}/blob/main/logs/searches.csv">חיפושים שנכשלו</a> · <a href="https://github.com/${repo}/blob/main/logs/runs.csv">ריצות</a>`);
+      return;
+    }
+    case 'dashboard': {
+      const all = Object.values(db.users);
+      const week = new Date(Date.parse(todayIso) - 6 * 864e5).toISOString().slice(0, 10);
+      const trips = all.filter((u) => codec.isTrip(u.prefs)).length;
+      const sources = new Map();
+      for (const u of others(db)) { const k = u.source || 'ללא הזמנה'; sources.set(k, (sources.get(k) || 0) + 1); }
+      const mode = { open: 'פתוחה לכולם', invite: 'בהזמנה בלבד', closed: 'סגורה (רק רשימת המתנה)' }[SIGNUP.mode] || SIGNUP.mode;
+      const room = noRoom(db, todayIso);
+      await reply(chatId, [
+        '📊 <b>מצב הבוט</b>',
+        `הרשמה: ${mode}${room ? ` · כרגע אין מקום (${{ closed: 'סגורה', full: 'הבוט מלא', daily: 'המכסה היומית נגמרה' }[room]})` : ''}`,
+        `👥 משתמשים: ${others(db).length} מתוך ${SIGNUP.maxUsers} (בלעדיך) · מושהים ${all.filter(isPaused).length} · מסעות ${trips}`,
+        `🆕 נרשמו היום: ${newToday(db, todayIso)}${SIGNUP.maxNewPerDay ? ` מתוך ${SIGNUP.maxNewPerDay}` : ''} · ב-7 ימים: ${others(db).filter((u) => (u.createdAt || '') >= week).length}`,
+        `⏳ ברשימת המתנה: ${(db.waitlist || []).length} (עד ${SIGNUP.maxWaitlist}) · 🚫 חסומים: ${(db.blocked || []).length}`,
+        `🌍 לפי שפה: ${['he', 'en'].map((L) => `${L} ${others(db).filter((u) => (u.prefs.lang || 'he') === L).length}`).join(' · ')}`,
+        `🎟️ לפי מקור: ${[...sources].map(([k, v]) => `${esc(k)} ${v}`).join(' · ') || '—'}`,
+        '',
+        `גרפים (מספרים בלבד, בלי פרטים אישיים): <a href="${CONFIG.pagesUrl}dashboard.html">הדשבורד</a>`,
+        'המגבלות נקבעות ב-config.json תחת "signup".',
+      ].join('\n'));
+      return;
+    }
+    case 'users': {
+      const list = sortedUsers(db);
+      if (!list.length) { await reply(chatId, 'אין משתמשים רשומים כרגע.'); return; }
+      const rows = list.map((u, i) => {
+        const st = store.loadState(u.id);
+        const best = st.lastRun && st.lastRun.bestUsd ? `$${st.lastRun.bestUsd.toLocaleString('en-US')}${codec.isTrip(u.prefs) ? ' (כל המסע)' : ''}` : 'עוד אין';
+        const last = st.lastRun ? d(st.lastRun.at.slice(0, 10)) : '—';
+        return `${i + 1}. <b>${esc(u.name) || 'ללא שם'}</b>${u.owner ? ' (אתה)' : ''}${isPaused(u) ? ' ⏸️ מושהה' : ''}${u.source ? ` · 🎟️ ${esc(u.source)}` : ''} · נרשם ${d(u.createdAt.slice(0, 10))}\n${userLine(u)}\n💰 הזול ביותר: ${best} · בדיקה אחרונה: ${last}`;
+      });
+      await replyLong(chatId, `👥 <b>${list.length} משתמשים</b> (מקסימום ${SIGNUP.maxUsers} בלעדיך) · /block N לחסימה`, rows);
+      return;
+    }
+    case 'waitlist': {
+      const w = db.waitlist || [];
+      if (!w.length) { await reply(chatId, 'רשימת ההמתנה ריקה.'); return; }
+      await replyLong(chatId, `⏳ <b>${w.length} ברשימת ההמתנה</b> · /admit 3 מכניס את 3 הראשונים`, w.map((x, i) => `${i + 1}. <b>${esc(x.name) || 'ללא שם'}</b> · מחכה מ-${d(x.at.slice(0, 10))}\n${userLine({ prefs: x.prefs })}`));
+      return;
+    }
+    case 'admit': {
+      if (!(db.waitlist || []).length) { await reply(chatId, 'רשימת ההמתנה ריקה.'); return; }
+      const k = await admitWaiting(db, todayIso, toDispatch, n);
+      await reply(chatId, `✅ נכנסו ${k}. בתור נשארו ${db.waitlist.length}.`);
+      return;
+    }
+    case 'block': {
+      const u = sortedUsers(db)[n - 1];
+      if (!c.arg || !u || u.owner) { await reply(chatId, 'כך חוסמים: <code>/block 4</code> (המספר מתוך /users). החסימה מוחקת את המשתמש ומתעלמת מכל מה שהוא שולח.'); return; }
+      delete db.users[u.id]; store.deleteState(u.id);
+      db.blocked = db.blocked || []; db.blocked.push({ chatId: u.chatId, name: u.name, at: new Date().toISOString() });
+      await reply(chatId, `🚫 ${esc(u.name) || 'ללא שם'} נחסם ונמחק. /blocked · /unblock`);
+      return;
+    }
+    case 'blocked': {
+      const b = db.blocked || [];
+      await reply(chatId, b.length ? `🚫 <b>${b.length} חסומים</b>\n${b.map((x, i) => `${i + 1}. ${esc(x.name) || 'ללא שם'} · מ-${d(x.at.slice(0, 10))}`).join('\n')}\n\n/unblock N לשחרור` : 'אין חסומים.');
+      return;
+    }
+    case 'unblock': {
+      const b = db.blocked || []; const x = b[n - 1];
+      if (!c.arg || !x) { await reply(chatId, 'כך משחררים: <code>/unblock 1</code> (המספר מתוך /blocked).'); return; }
+      b.splice(n - 1, 1);
+      await reply(chatId, `✅ ${esc(x.name) || 'ללא שם'} שוחרר, ויכול להירשם שוב.`);
+      return;
+    }
+    default:
+  }
+}
+
 async function handle(db, msg, todayIso, toDispatch) {
   const chat = msg.chat || {};
   if (chat.type !== 'private') return; // only one-to-one chats
   const chatId = String(chat.id);
+  if (isBlocked(db, chatId)) return; // blocked by the owner: no answer at all
   const text = (msg.text || '').trim();
   const existing = Object.values(db.users).find((u) => u.chatId === chatId); // one user per chat
   const tgLang = msg.from && msg.from.language_code;
@@ -267,54 +466,65 @@ async function handle(db, msg, todayIso, toDispatch) {
   CURRENT = { type: c ? c.cmd : 'other', user: existing ? existing.id : '-' };
 
   if (c && c.cmd === 'start') {
-    if (!c.arg) { await reply(chatId, existing ? `${tx(lang, 'alreadyIn')}\n\n${prefsText(existing.prefs)}\n\n${help(existing, lang)}` : tx(lang, 'notRegistered')); return; }
+    const waiting = !existing && waitPos(db, chatId);
+    if (!c.arg) { // a stranger who found the bot in Telegram: explain, and give the form as a button
+      if (existing) { await reply(chatId, `${tx(lang, 'alreadyIn')}\n\n${prefsText(existing.prefs)}\n\n${help(existing, lang)}`); return; }
+      if (waiting) { await reply(chatId, tx(lang, 'waitStatus', waiting)); return; }
+      const room = noRoom(db, todayIso);
+      const extra = SIGNUP.mode === 'invite' && !isOwnerChat(chatId) ? tx(lang, 'welcomeInvite') : room ? tx(lang, 'welcomeWait') : '';
+      CURRENT.type = 'welcome';
+      await reply(chatId, `${tx(lang, 'welcome')}${extra ? `\n\n${extra}` : ''}`, null, [tx(lang, 'formBtn'), formUrl(lang)]);
+      return;
+    }
     let p;
-    try { p = codec.decode(c.arg); } catch { await reply(chatId, tx(lang, 'badCode')); return; }
+    try { p = codec.decode(c.arg); } catch { await reply(chatId, tx(lang, 'badCode'), null, [tx(lang, 'formBtn'), formUrl(lang)]); return; }
     const L = p.lang || lang;
-    // A new user needs a valid invite. A user already signed up in this chat may always update their settings.
-    const isOwner = !!OWNER_CHAT && chatId === OWNER_CHAT; // the owner needs no invite
-    if (!existing && !isOwner && !CONFIG.invites.some((i) => i.sha256 === store.sha256(p.invite))) { await reply(chatId, tx(L, 'badInvite')); return; }
+    const isOwner = isOwnerChat(chatId); // the owner needs no invite and is never on the waitlist
     const errs = codec.validate(p, todayIso, L);
-    if (errs.length) { await reply(chatId, `${tx(L, 'problems')}\n• ${errs.map(esc).join('\n• ')}\n\n${tx(L, 'fillAgain')}`); return; }
-    if (!existing && Object.keys(db.users).length >= CONFIG.maxUsers) { await reply(chatId, tx(L, 'full')); return; }
+    if (errs.length) { await reply(chatId, `${tx(L, 'problems')}\n• ${errs.map(esc).join('\n• ')}\n\n${tx(L, 'fillAgain')}`, null, [tx(L, 'formBtn'), formUrl(L)]); return; }
     const { invite, ...prefs } = p;
-    const user = existing || { id: store.newUserId(), chatId, createdAt: new Date().toISOString() };
-    user.name = (chat.first_name || '').slice(0, 40);
-    if (CONFIG.invites.some((i) => i.sha256 === store.sha256(invite))) user.invite = invite; // kept (encrypted) for the /edit link
-    user.prefs = prefs; // replaces any earlier settings of this chat
-    user.owner = !!OWNER_CHAT && chatId === OWNER_CHAT;
-    user.updatedAt = new Date().toISOString();
-    db.users[user.id] = user;
-    if (existing) store.deleteState(user.id); // new settings: start fresh
+    const name = (chat.first_name || '').slice(0, 40);
+    if (existing) { // a user already signed up in this chat may always update their settings
+      if (!changeAllowed(existing, todayIso)) { await reply(chatId, tx(L, 'tooManyChanges')); return; }
+      existing.name = name; existing.prefs = prefs; existing.owner = isOwner; existing.updatedAt = new Date().toISOString();
+      if (!existing.invite && inviteOf(invite)) { existing.invite = invite; existing.source = inviteOf(invite).label; }
+      store.deleteState(existing.id); // new settings: start fresh
+    }
+    // A new person: an invite is needed in "invite" mode; with no room they join the waitlist (in order).
+    const goodInvite = !!inviteOf(invite);
+    if (!existing && !isOwner) {
+      if (SIGNUP.mode === 'invite' && !goodInvite && !waiting) { await reply(chatId, tx(L, 'badInvite')); return; }
+      if (waiting || noRoom(db, todayIso) || (db.waitlist || []).length) {
+        db.waitlist = db.waitlist || [];
+        const entry = { chatId, name, prefs, invite: goodInvite ? invite : undefined, at: new Date().toISOString() };
+        if (waiting) db.waitlist[waiting - 1] = { ...entry, at: db.waitlist[waiting - 1].at }; // keeps their place in line
+        else if (db.waitlist.length >= SIGNUP.maxWaitlist) { await reply(chatId, tx(L, 'waitFull')); return; }
+        else db.waitlist.push(entry);
+        CURRENT.type = 'waitlist';
+        await reply(chatId, tx(L, 'waitlisted', waitPos(db, chatId)));
+        if (!waiting) await notifyOwner(`⏳ <b>מישהו נכנס לרשימת ההמתנה</b>: ${esc(name) || 'ללא שם'} (${{ closed: 'ההרשמה סגורה', full: 'הבוט מלא', daily: 'הגיעה המכסה היומית' }[noRoom(db, todayIso)] || 'יש תור'})\n${userLine({ prefs })}\nבתור: ${db.waitlist.length} · /waitlist · /admit`);
+        return;
+      }
+    }
+    const user = existing || addUser(db, chatId, name, prefs, invite);
     CURRENT.user = user.id; CURRENT.type = existing ? 'update' : 'signup';
     const paused = isPaused(user);
     if (!paused) toDispatch.push(user.id);
-    if (!user.owner) await notifyOwner(`👤 <b>${existing ? 'משתמש עדכן הגדרות' : 'משתמש חדש נרשם'}</b>: ${esc(user.name) || 'ללא שם'}${paused ? ' (מושהה: כדי להפעיל אותו מחדש, להוציא אותו מ-pausedUsers ב-config.json)' : ''}\n${userLine(user)}\nסה״כ משתמשים: ${Object.keys(db.users).length}`);
+    if (!user.owner) await notifyOwner(`👤 <b>${existing ? 'משתמש עדכן הגדרות' : 'משתמש חדש נרשם'}</b>: ${esc(user.name) || 'ללא שם'}${user.source ? ` (הזמנה: ${esc(user.source)})` : ''}${paused ? ' (מושהה: כדי להפעיל אותו מחדש, להוציא אותו מ-pausedUsers ב-config.json)' : ''}\n${userLine(user)}\nסה״כ משתמשים: ${Object.keys(db.users).length}`);
     await reply(chatId, `${existing ? tx(L, 'updated') : tx(L, 'registered')}\n\n${prefsText(prefs)}\n\n${paused ? tx(L, 'paused') : tx(L, 'firstSearch')}\n\n${help(user, L)}`);
     return;
   }
 
-  if (c && c.cmd === 'errors' && OWNER_CHAT && chatId === OWNER_CHAT) { // owner only: the search log
-    const hours = Math.min(24 * 14, Number(c.arg) || 24);
-    const repo = process.env.GITHUB_REPOSITORY || 'mrTal77/flight-bot';
-    await reply(chatId, `${require('./lib/logs').summarize(hours)}\n\nהטבלאות המלאות: <a href="https://github.com/${repo}/blob/main/logs/searches.csv">חיפושים שנכשלו</a> · <a href="https://github.com/${repo}/blob/main/logs/runs.csv">ריצות</a>`);
+  if (c && ownerCommand(c.cmd) && isOwnerChat(chatId)) { await ownerCmd(db, chatId, c, todayIso, toDispatch); return; }
+
+  if (!existing) {
+    const pos = waitPos(db, chatId);
+    if (pos && c && c.cmd === 'stop') { db.waitlist.splice(pos - 1, 1); await reply(chatId, tx(lang, 'waitLeft')); return; }
+    if (pos) { await reply(chatId, tx(lang, 'waitStatus', pos)); return; }
+    CURRENT.type = 'welcome';
+    await reply(chatId, SIGNUP.mode === 'invite' ? tx(lang, 'notRegistered') : tx(lang, 'welcome'), null, [tx(lang, 'formBtn'), formUrl(lang)]);
     return;
   }
-
-  if (c && c.cmd === 'users' && OWNER_CHAT && chatId === OWNER_CHAT) {
-    const list = Object.values(db.users).sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
-    if (!list.length) { await reply(chatId, 'אין משתמשים רשומים כרגע.'); return; }
-    const rows = list.map((u, i) => {
-      const st = store.loadState(u.id);
-      const best = st.lastRun && st.lastRun.bestUsd ? `$${st.lastRun.bestUsd.toLocaleString('en-US')}${codec.isTrip(u.prefs) ? ' (כל המסע)' : ''}` : 'עוד אין';
-      const last = st.lastRun ? d(st.lastRun.at.slice(0, 10)) : '—';
-      return `${i + 1}. <b>${esc(u.name) || 'ללא שם'}</b>${u.owner ? ' (אתה)' : ''}${isPaused(u) ? ' ⏸️ מושהה' : ''} · נרשם ${d(u.createdAt.slice(0, 10))}\n${userLine(u)}\n💰 הזול ביותר: ${best} · בדיקה אחרונה: ${last}`;
-    });
-    await reply(chatId, `👥 <b>${list.length} משתמשים</b> (מקסימום ${CONFIG.maxUsers})\n\n${rows.join('\n\n')}`);
-    return;
-  }
-
-  if (!existing) { await reply(chatId, tx(lang, 'notRegistered')); return; }
   const u = existing;
   const trip = codec.isTrip(u.prefs);
   const p = trip ? u.prefs : codec.withDefaults(u.prefs);
@@ -339,7 +549,7 @@ async function handle(db, msg, todayIso, toDispatch) {
     }
     case 'edit': {
       const url = `${CONFIG.pagesUrl}?p=${codec.encode({ ...p, invite: u.invite || 'xxxxxx' })}`;
-      await reply(chatId, tx(lang, 'editLink', esc(url)));
+      await reply(chatId, tx(lang, 'editLink', esc(url)), null, [tx(lang, 'editBtn'), url]);
       return;
     }
     case 'lang': {
@@ -393,23 +603,26 @@ async function handle(db, msg, todayIso, toDispatch) {
   }
 }
 
-// The "/" menu in Telegram (Hebrew by default, English for English-language Telegram apps). Set once per version.
-const MENU_VERSION = 1;
-const MENU = {
-  he: [['status', 'ההגדרות שלי והמחיר הכי טוב'], ['edit', 'עריכת ההגדרות בטופס'], ['price', 'סף מחיר חדש, למשל /price 900'], ['dest', 'יעד חדש, למשל /dest אתונה'],
-    ['out', 'תאריך הלוך, למשל /out 21.12 3'], ['back', 'תאריך חזור, למשל /back 10.1 3'], ['lang', 'English'], ['help', 'עזרה'], ['stop', 'הפסקה ומחיקת הפרטים']],
-  en: [['status', 'My settings and the best price'], ['edit', 'Edit my settings in the form'], ['price', 'New price limit, e.g. /price 900'], ['dest', 'New destination, e.g. /dest Athens'],
-    ['out', 'Outbound date, e.g. /out 21.12 3'], ['back', 'Return date, e.g. /back 10.1 3'], ['lang', 'עברית'], ['help', 'Help'], ['stop', 'Stop and delete my details']],
-};
-async function setCommandMenu(db) {
-  if (DRY || db.menuVersion === MENU_VERSION) return false;
-  try {
-    const cmds = (L) => MENU[L].map(([command, description]) => ({ command, description }));
-    await tg('setMyCommands', { commands: cmds('he') });
-    await tg('setMyCommands', { commands: cmds('en'), language_code: 'en' });
-    db.menuVersion = MENU_VERSION;
-    return true;
-  } catch (e) { console.log('command menu not set'); return false; }
+// The bot's Telegram profile (name, short description, description, "/" menu): lib/profile.js.
+// Set once per PROFILE_VERSION. English is the default for every language; Hebrew Telegram apps get Hebrew.
+// The owner's chat also gets the owner-only commands in its menu.
+const { PROFILE, PROFILE_VERSION } = require('./lib/profile');
+const OWNER_MENU = [['dashboard', 'מצב הבוט'], ['users', 'רשימת המשתמשים'], ['waitlist', 'רשימת ההמתנה'], ['admit', 'הכנסה מהתור, למשל /admit 3'], ['errors', 'יומן החיפושים']];
+async function setProfile(db) {
+  if (DRY || db.profileVersion === PROFILE_VERSION) return false;
+  const cmds = (list) => list.map(([command, description]) => ({ command, description }));
+  let ok = true;
+  const call = async (method, body) => { try { await tg(method, body); } catch (e) { ok = false; console.log(`${method} not set`); } };
+  for (const [L, p] of Object.entries(PROFILE)) {
+    const lc = L === 'default' ? {} : { language_code: L };
+    await call('setMyCommands', { commands: cmds(p.commands), ...lc });
+    await call('setMyName', { name: p.name, ...lc });
+    await call('setMyShortDescription', { short_description: p.short, ...lc });
+    await call('setMyDescription', { description: p.description, ...lc });
+  }
+  if (OWNER_CHAT) await call('setMyCommands', { commands: cmds([...PROFILE.he.commands, ...OWNER_MENU]), scope: { type: 'chat', chat_id: Number(OWNER_CHAT) } });
+  if (ok) db.profileVersion = PROFILE_VERSION; // a failure (e.g. Telegram's rate limit on names) is tried again next run
+  return ok;
 }
 
 async function main() {
@@ -417,22 +630,36 @@ async function main() {
   const db = store.loadUsers();
   const updates = updatesFile ? JSON.parse(fs.readFileSync(updatesFile, 'utf8'))
     : await tg('getUpdates', { offset: (db.botOffset || 0) + 1, timeout: 0, allowed_updates: ['message'] });
-  const menuSet = await setCommandMenu(db);
+  const profileSet = await setProfile(db);
   if (!DRY && !updatesFile) await require('./lib/clicks').pullClicks(); // link clicks -> logs/clicks.csv (CLICKS-SETUP.md)
-  if (!updates.length) { if (menuSet) store.saveUsers(db); console.log('no new messages'); return; }
   const today = new Date().toISOString().slice(0, 10);
   const toDispatch = [];
+  // People on the waitlist get in first (a new day, or a place freed since the last run), then the new messages.
+  const before = await admitWaiting(db, today, toDispatch);
+  const perChat = new Map(); // abuse limit: at most maxMessagesPerRun messages from one chat in one run
   for (const u of updates) {
     db.botOffset = Math.max(db.botOffset || 0, u.update_id);
     if (!u.message) continue;
+    const chat = String((u.message.chat || {}).id); const k = (perChat.get(chat) || 0) + 1; perChat.set(chat, k);
+    if (SIGNUP.maxMessagesPerRun && k > SIGNUP.maxMessagesPerRun && !isOwnerChat(chat)) {
+      if (k === SIGNUP.maxMessagesPerRun + 1 && (u.message.chat || {}).type === 'private' && !isBlocked(db, chat)) {
+        const ex = Object.values(db.users).find((x) => x.chatId === chat);
+        const tl = u.message.from && u.message.from.language_code;
+        CURRENT = { type: 'rate-limit', user: ex ? ex.id : '-' };
+        try { await reply(chat, tx(ex ? ex.prefs.lang : (!tl || /^(he|iw)/.test(tl) ? 'he' : 'en'), 'tooManyMessages')); } catch {}
+      }
+      continue;
+    }
     try { await handle(db, u.message, today, toDispatch); } catch (e) { console.log('message failed:', e.message.slice(0, 80)); }
   }
+  const after = updates.length ? await admitWaiting(db, today, toDispatch) : 0; // places freed by /stop in this run
+  if (!updates.length && !before && !profileSet) { console.log('no new messages'); return; }
   store.saveUsers(db);
   saveMessageLog();
   // Searches start only after the workflow has pushed the users file (a search started earlier would not see the change).
   const ids = [...new Set(toDispatch)];
   fs.writeFileSync(PENDING, JSON.stringify(ids));
-  console.log(`processed ${updates.length} messages; users: ${Object.keys(db.users).length}; searches to start: ${ids.length}`);
+  console.log(`processed ${updates.length} messages; users: ${Object.keys(db.users).length}; waitlist: ${(db.waitlist || []).length}; admitted: ${before + after}; searches to start: ${ids.length}`);
 }
 
 // Owner only (manual run with an owner code): register or update the owner as if they had pressed Start.
@@ -456,4 +683,6 @@ async function startPending() {
 }
 
 if (require.main === module) (argv.includes('--start-searches') ? startPending() : argv.includes('--owner-start') ? ownerStart(argv[argv.indexOf('--owner-start') + 1] || '') : main()).catch((e) => { console.error('ERROR', e.message); process.exit(1); });
-module.exports = { prefsText, parseDates, parseDate, findPlaces, parseCommand, handle, routeOf, userLine, isPaused };
+module.exports = { prefsText, parseDates, parseDate, findPlaces, parseCommand, handle, routeOf, userLine, isPaused, noRoom, admitWaiting, SIGNUP,
+  // tests: replies are collected in SENT instead of being sent
+  testMode(on = true) { DRY = on; QUIET = on; SENT.length = 0; MESSAGES.length = 0; return SENT; } };

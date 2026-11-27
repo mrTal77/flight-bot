@@ -361,3 +361,85 @@ console.log('kayak filter test passed');
   assert.equal(bot.isPaused({ id: 'u0000000001' }), false);
   console.log('trip bot tests passed');
 }
+
+// Open sign-up: no invite needed, a welcome with the form button, the waitlist, daily limit, blocking, change limit
+(async () => {
+  const bot = require('./bot.js');
+  const S = bot.SIGNUP; const saved = { ...S };
+  const sent = bot.testMode();
+  const today = new Date().toISOString().slice(0, 10);
+  const code = (lang) => require('./docs/codec.js').encode({ invite: 'public', lang, origin: 'TLV', destination: 'ATH', outFrom: '2030-12-01', outTo: '2030-12-05', oneWay: true, maxPrice: 300 });
+  const msg = (id, text, lc) => ({ chat: { id, type: 'private', first_name: `p${id}` }, from: { language_code: lc || 'en' }, text });
+  const db = { users: {}, waitlist: [] }; const go = [];
+  Object.assign(S, { mode: 'open', maxUsers: 2, maxNewPerDay: 0, maxWaitlist: 2, maxChangesPerDay: 2 });
+  const last = () => sent[sent.length - 1];
+
+  await bot.handle(db, msg(101, '/start'), today, go);
+  assert.ok(last().text.includes('Welcome') && last().button && /lang=en/.test(last().button[1]), 'stranger gets a welcome and the form button');
+  await bot.handle(db, msg(102, 'hello', 'he'), today, go);
+  assert.ok(last().text.includes('ברוכים הבאים') && /lang=he/.test(last().button[1]), 'Hebrew welcome for a Hebrew Telegram app');
+
+  await bot.handle(db, msg(101, `/start ${code('en')}`), today, go);
+  await bot.handle(db, msg(102, `/start ${code('he')}`), today, go);
+  assert.equal(Object.keys(db.users).length, 2, 'open mode: any invite code is fine');
+  assert.ok(Object.values(db.users).every((u) => !u.invite && !u.source), 'a made-up invite is not stored');
+  await bot.handle(db, msg(103, `/start ${code('en')}`), today, go);
+  assert.equal(Object.keys(db.users).length, 2); assert.equal(db.waitlist.length, 1);
+  assert.ok(last().text.includes('waitlist') && last().text.includes('number 1'), 'full: joins the waitlist');
+  await bot.handle(db, msg(104, `/start ${code('en')}`), today, go);
+  await bot.handle(db, msg(105, `/start ${code('en')}`), today, go);
+  assert.equal(db.waitlist.length, 2); assert.ok(last().text.includes('full'), 'waitlist has a limit');
+  await bot.handle(db, msg(104, '/status'), today, go);
+  assert.ok(last().text.includes('number 2'), 'waitlist position');
+  await bot.handle(db, msg(104, `/start ${code('he')}`), today, go);
+  assert.equal(db.waitlist[1].prefs.lang, 'he', 'a new code updates the waitlist entry and keeps the place');
+
+  const first = Object.values(db.users).find((u) => u.chatId === '101');
+  await bot.handle(db, msg(101, '/stop'), today, go);
+  const n0 = go.length;
+  assert.equal(await bot.admitWaiting(db, today, go), 1, 'a freed place goes to the first in line');
+  assert.ok(Object.values(db.users).some((u) => u.chatId === '103') && go.length === n0 + 1);
+  assert.ok(sent.some((m) => m.chatId === '103' && m.text.includes('signed up')));
+  assert.equal(db.waitlist.length, 1);
+  assert.ok(!db.users[first.id]);
+
+  // daily limit: the next person waits even with room
+  Object.assign(S, { maxUsers: 10, maxNewPerDay: 2 });
+  assert.equal(bot.noRoom(db, today), 'daily');
+  assert.equal(bot.noRoom(db, '2030-11-02'), null, 'a new day has room again');
+  await bot.handle(db, msg(104, '/stop'), today, go);
+  assert.ok(last().text.includes('left the waitlist')); assert.equal(db.waitlist.length, 0);
+
+  // invite mode: a new person needs a real invite
+  Object.assign(S, { mode: 'invite', maxNewPerDay: 0 });
+  await bot.handle(db, msg(106, `/start ${code('en')}`), today, go);
+  assert.ok(last().text.includes('invite code is not valid'));
+
+  // change limit per day
+  const u2 = Object.values(db.users).find((u) => u.chatId === '102');
+  for (const p of [400, 410]) await bot.handle(db, msg(102, `/price ${p}`), today, go);
+  await bot.handle(db, msg(102, '/price 420'), today, go);
+  assert.ok(last().text.includes('הרבה פעמים')); assert.equal(u2.prefs.maxPrice, 410);
+
+  // blocked chats get no answer
+  db.blocked = [{ chatId: '107', name: 'x', at: today }];
+  const k = sent.length; await bot.handle(db, msg(107, '/start'), today, go);
+  assert.equal(sent.length, k, 'a blocked chat gets nothing');
+  for (const u of Object.values(db.users)) require('./lib/store').deleteState(u.id); // the price changes saved a state file
+  Object.assign(S, saved); bot.testMode(false);
+  console.log('open sign-up tests passed');
+})().catch((e) => { console.error(e); process.exit(1); });
+
+// Telegram profile texts fit Telegram's limits; the landing page opens the same bot as config.json
+{
+  const { PROFILE } = require('./lib/profile');
+  for (const p of Object.values(PROFILE)) {
+    assert.ok(p.name.length <= 64 && p.short.length <= 120 && p.description.length <= 512, 'profile text too long');
+    assert.ok(p.commands.every(([c, t]) => /^[a-z0-9_]{1,32}$/.test(c) && t.length <= 256));
+  }
+  const html = require('fs').readFileSync(require('path').join(__dirname, 'docs', 'index.html'), 'utf8');
+  const cfg = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, 'config.json'), 'utf8'));
+  assert.ok(html.includes(`var BOT = '${cfg.botUsername}';`), 'docs/index.html BOT must match config.json botUsername');
+  assert.ok(html.includes(`var OPEN = ${(cfg.signup || {}).mode !== 'invite'};`), 'docs/index.html OPEN must match config.json signup.mode');
+  console.log('profile and landing page tests passed');
+}

@@ -9,8 +9,8 @@ Everything runs on free GitHub services: GitHub Actions (searches and the bot) a
 ## How it works
 
 - **Landing page** (`docs/`, GitHub Pages): a form with flexible dates (a date ±1/3/5 days, or a range up to 31 days), passengers, cabin, bags, stops, flight time, departure hours, airlines per direction, layover limit and self-transfer. On "confirm" it packs the preferences into a short code
-  (`docs/codec.js`) and opens `t.me/<bot>?start=<code>`. Sign-up needs an invite link (`?i=<invite>`).
-- **Bot** (`bot.js`, every 5 minutes): reads new Telegram messages, checks the invite, validates the preferences,
+  (`docs/codec.js`) and opens `t.me/<bot>?start=<code>`. With open sign-up (`signup.mode: open`) anyone can use it; in invite mode it needs an invite link (`?i=<invite>`). The page also explains the bot to strangers (how it works, questions).
+- **Bot** (`bot.js`, every 5 minutes): reads new Telegram messages, lets people in (or onto the waitlist, see below), validates the preferences,
   stores the user and starts a first search. Commands: `/status`, `/edit` (link to the user's own form, prefilled; saving it replaces their settings), `/price`, `/dest`, `/out`, `/back` (change one setting in the chat), `/lang`, `/stop` (deletes the user's data), `/help`. One user per Telegram chat: any update replaces that user's settings.
 - **Trips** ("כמה טיסות" in the form): 2 to 5 one-way flights in one sign-up. Each flight has its own route, dates,
   passengers, stops, airline and price limit; cabin and bags are shared. Each flight is searched on its own (the day's
@@ -35,6 +35,31 @@ Everything runs on free GitHub services: GitHub Actions (searches and the bot) a
 - Results are compared as one round-trip ticket vs. two separate tickets. An alert needs a price at or under the
   limit (per passenger). Prices where the bags are known to be missing are dropped; when it is unknown, the price is
   shown and marked with "*".
+
+## Open sign-up, limits and the waitlist
+
+Set in `config.json` → `signup`:
+
+| Field | Meaning |
+|---|---|
+| `mode` | `open` = anyone; `invite` = only with an invite code; `closed` = new people only join the waitlist |
+| `maxUsers` | users besides the owner; above it, new people join the waitlist |
+| `maxNewPerDay` | new users a day (UTC); above it, the waitlist (0 = no limit) |
+| `maxWaitlist` | the waitlist's length; above it, people are told to try again later |
+| `maxChangesPerDay` | settings changes a user may make a day (each one starts a search) |
+| `maxMessagesPerRun` | messages from one chat handled per bot run; the rest are skipped |
+
+- `/start` without a code (someone who found the bot in Telegram) gets a welcome with a button to the form.
+- The waitlist is kept in order, encrypted with the users. At every bot run people get in from it while there is
+  room, get a message, and their first search starts. If their dates passed while waiting, they get the form again.
+- Invite codes still work in open mode; their `label` shows where a user came from (in `/users` and `/dashboard`).
+- Owner commands: `/dashboard` (users, sign-ups today, waitlist, blocked, by language and source), `/users`,
+  `/waitlist`, `/admit N` (let the first N in, even above the limits), `/block N` (deletes user N of `/users` and
+  ignores their chat from then on), `/blocked`, `/unblock N`.
+- `docs/dashboard.html` (on GitHub Pages): charts from the public logs only: active users, sign-ups, waitlist joins,
+  alerts, search runs and clicks per day, and success per source.
+- The bot's name, descriptions and command menu come from `lib/profile.js` (English by default, Hebrew for Hebrew
+  Telegram apps). The username and picture are set in BotFather: `BOTFATHER.md`.
 
 ## Search log (debugging)
 
@@ -76,16 +101,16 @@ Everything runs on free GitHub services: GitHub Actions (searches and the bot) a
    - `TELEGRAM_CHAT_ID`: the owner's chat id (gets the extra owner-only searches).
    - `DUFFEL_TOKEN` (optional).
 2. Pages: Settings → Pages → Deploy from a branch → `main`, folder `/docs`.
-3. Invite link: `https://<user>.github.io/<repo>/?i=<invite>`. To add an invite, put the SHA-256 of a new
-   6-character code in `config.json` → `invites`.
+3. Sign-up link: `https://<user>.github.io/<repo>/` (open mode). Invite link: `https://<user>.github.io/<repo>/?i=<invite>`.
+   To add an invite, put the SHA-256 of a new 6-character code and a label in `config.json` → `invites`.
 
 ## Settings (`config.json`)
 
 | Field | Meaning |
 |---|---|
-| `botUsername` | the Telegram bot the landing page opens (also set in `docs/index.html`) |
-| `maxUsers` | sign-ups are refused above this number |
-| `invites` | SHA-256 hashes of valid invite codes |
+| `botUsername` | the Telegram bot the landing page opens (also set in `docs/index.html`; `test.js` checks they match) |
+| `signup` | open sign-up and its limits (see above) |
+| `invites` | SHA-256 hashes of invite codes, with a `label` |
 | `realertDropUsd`, `realertHours` | when to alert again |
 | `markets` | Kayak sites; `bagFilter` makes prices include a checked bag |
 | `kiwi`, `googleDaily`, `googleMaxSearches`, `duffelEveryHours` | sources on/off, Google searches a day |

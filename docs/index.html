@@ -3,7 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex">
+<meta name="description" content="Free flight price alerts on Telegram. Pick a route, flexible dates and a price limit, and get a message when a ticket drops below it.">
+<meta property="og:title" content="Flight price alerts ✈️">
+<meta property="og:description" content="Free flight price alerts on Telegram: pick a route, dates and a price limit, and get a message when a ticket drops below it.">
+<meta property="og:type" content="website">
 <title>בוט מחירי טיסות</title>
 <style>
   :root {
@@ -97,6 +100,15 @@
   .place-list .pn { min-width: 0; }
   .place-list .ps { display: block; color: var(--muted); font-size: 12px; }
   .foot { color: var(--muted); font-size: 13px; margin-top: 16px; }
+  .how { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 0 0 14px; padding: 0; list-style: none; }
+  .how li { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; font-size: 14px; }
+  .how b { display: block; font-size: 22px; margin-bottom: 4px; }
+  .faq details { border-top: 1px solid var(--line); margin: 0; padding: 10px 0; }
+  .faq details:first-of-type { border-top: 0; padding-top: 0; }
+  .faq details summary::before, .faq details[open] summary::before { content: ""; }
+  .faq summary { color: var(--text); }
+  .faq p { margin: 8px 0 0; color: var(--muted); font-size: 14px; }
+  @media (max-width: 480px) { .how { grid-template-columns: 1fr; } .how li { display: flex; gap: 10px; align-items: center; } .how b { margin: 0; } }
   [hidden] { display: none !important; }
   @media (max-width: 380px) { .row { grid-template-columns: 1fr; } .swap { justify-self: center; transform: rotate(90deg); margin: -6px 0 4px; height: 36px; } }
 </style>
@@ -108,6 +120,12 @@
     <h1 data-t="title"></h1>
     <p class="lead" data-t="lead"></p>
   </header>
+
+  <ol class="how" id="how">
+    <li><b>📝</b><span data-t="how1"></span></li>
+    <li><b>🔎</b><span data-t="how2"></span></li>
+    <li><b>🔔</b><span data-t="how3"></span></li>
+  </ol>
 
   <section class="card blocked" id="noInvite">
     <h2 data-t="noInviteTitle"></h2>
@@ -244,6 +262,15 @@
     <p class="foot" data-t="privacy"></p>
   </form>
 
+  <section class="card faq" id="faq">
+      <h2 data-t="faqTitle"></h2>
+      <details><summary data-t="q1"></summary><p data-t="a1"></p></details>
+      <details><summary data-t="q2"></summary><p data-t="a2"></p></details>
+      <details><summary data-t="q3"></summary><p data-t="a3"></p></details>
+      <details><summary data-t="q4"></summary><p data-t="a4"></p></details>
+      <details><summary data-t="q5"></summary><p data-t="a5"></p></details>
+  </section>
+
   <section class="card" id="preview" hidden>
     <h2 data-t="previewTitle"></h2>
     <div id="previewText" class="preview"></div>
@@ -323,14 +350,23 @@
 <script>
 (function () {
   'use strict';
-  var BOT = 'Ffffffflightticketbot';
+  var BOT = 'Ffffffflightticketbot'; // = config.json "botUsername" (test.js checks)
+  var OPEN = true; // = config.json "signup.mode" is not "invite": anyone may sign up, no invite link needed (test.js checks)
+  var PUBLIC_INVITE = 'public'; // the code format has an invite field; open sign-up fills it with this
   var ILS_PER_USD = 3.2; // rough, for the hint only; the bot uses the day's real rate
   var $ = function (id) { return document.getElementById(id); };
 
   // ---------- texts ----------
   var T = {
     he: {
-      title: '✈️ בוט מחירי טיסות', lead: 'ממלאים איזו טיסה מחפשים, והבוט בטלגרם בודק מחירים כל כמה שעות ושולח התראה כשהמחיר יורד מתחת לסף שבחרתם.',
+      title: '✈️ התראות מחירי טיסות', lead: 'ממלאים איזו טיסה מחפשים, והבוט בטלגרם בודק מחירים כמה פעמים ביום ושולח התראה כשהמחיר יורד מתחת לסף שבחרתם. בחינם, בלי חשבון.',
+      how1: 'ממלאים מסלול, תאריכים וסף מחיר (דקה אחת)', how2: 'הבוט מחפש בכמה אתרי טיסות כמה פעמים ביום', how3: 'מקבלים התראה בטלגרם כשהמחיר יורד, וסיכום פעם ביום',
+      faqTitle: 'שאלות נפוצות',
+      q1: 'כמה זה עולה?', a1: 'כלום. הבוט חינמי, בלי פרסומות ובלי הרשמה לאתר. צריך רק טלגרם.',
+      q2: 'איפה הבוט מחפש?', a2: 'ב-Kiwi.com, ב-Google Flights וב-Kayak, ובאתרי חברות הלואו-קוסט כשיש. הקנייה עצמה היא תמיד באתר של החברה או של הסוכן, לא דרך הבוט.',
+      q3: 'מה הבוט יודע עליי?', a3: 'רק את פרטי החיפוש (מסלול, תאריכים, נוסעים וסף מחיר), את השם הפרטי שלכם בטלגרם ואת מזהה הצ׳אט. הכול נשמר מוצפן. ⁦/stop⁩ בבוט מוחק הכול.',
+      q4: 'כמה מהר הבוט עונה?', a4: 'תוך כמה דקות, לא מיד. התוצאות הראשונות מגיעות תוך כ-20 דקות מההרשמה.',
+      q5: 'כתוב שיש רשימת המתנה. למה?', a5: 'מספר המשתמשים מוגבל כדי שהחיפושים יישארו מהירים. כשהבוט מלא נכנסים לתור, ומקבלים הודעה כשמתפנה מקום.',
       noInviteTitle: '🔒 צריך קישור הזמנה', noInviteText: 'ההרשמה פתוחה רק דרך קישור הזמנה. בקשו את הקישור ממי ששיתף איתכם את הבוט.',
       testBar: '🧪 מצב בדיקה: אחרי "אישרתי" יוצג סיכום בלבד, בלי לשלוח כלום לבוט.',
       editBar: '✏️ עדכון הגדרות: הטופס מולא בהגדרות הנוכחיות שלכם. משנים מה שרוצים ושומרים, וההגדרות החדשות יחליפו את הקודמות.',
@@ -351,7 +387,7 @@
       ilsHint: 'בערך ₪{a}{b} לפי שער משוער', perPax: ' לנוסע', advPrice: 'מסננים מתקדמים: עצירות ביניים וכרטיסים נפרדים',
       maxLayover: 'עצירת ביניים ארוכה ביותר (שעות)', selfTransfer: 'לאפשר כרטיסים נפרדים עם העברה עצמית (זול יותר, אבל לא מוגן אם טיסה מתעכבת)',
       submit: 'אישרתי, להמשיך לטלגרם', submitEdit: 'שמירת השינויים בטלגרם', fix: 'צריך לתקן:',
-      privacy: 'הפרטים נשלחים רק לבוט בטלגרם ונשמרים אצלו מוצפנים. מי ששיתף איתכם את הבוט רואה את פרטי החיפוש שלכם (מסלול, תאריכים וסף מחיר). אפשר להפסיק בכל רגע עם הפקודה ⁦/stop⁩ בבוט.',
+      privacy: 'הפרטים נשלחים רק לבוט בטלגרם ונשמרים אצלו מוצפנים. מפעיל הבוט רואה את פרטי החיפוש שלכם (מסלול, תאריכים וסף מחיר) ואת השם הפרטי בטלגרם. אפשר להפסיק בכל רגע עם הפקודה ⁦/stop⁩ בבוט, וזה מוחק את הפרטים.',
       previewTitle: '🧪 מצב בדיקה: זה מה שהבוט היה מקבל', previewNote: 'שום דבר לא נשלח לבוט, וההרשמה הקיימת לא השתנתה.', code: 'קוד:', backToForm: 'חזרה לטופס',
       almostDone: 'כמעט סיימנו', openBot: 'פתיחת הבוט בטלגרם', step1: 'בטלגרם, לחצו על <b>Start / התחל</b> למטה.',
       step2: 'לא מופיע כפתור Start? העתיקו את ההודעה הזו ושלחו אותה לבוט:', copy: 'העתקה', copied: 'הועתק ✓',
@@ -365,7 +401,14 @@
       },
     },
     en: {
-      title: '✈️ Flight price bot', lead: 'Tell us which flight you are looking for. The Telegram bot checks prices every few hours and alerts you when the price drops below your limit.',
+      title: '✈️ Flight price alerts', lead: 'Tell us which flight you are looking for. The Telegram bot checks prices a few times a day and alerts you when the price drops below your limit. Free, no account.',
+      how1: 'Fill in the route, dates and a price limit (1 minute)', how2: 'The bot searches several flight sites a few times a day', how3: 'Get a Telegram alert when the price drops, and a daily summary',
+      faqTitle: 'Questions',
+      q1: 'What does it cost?', a1: 'Nothing. The bot is free, with no ads and no website account. You only need Telegram.',
+      q2: 'Where does it search?', a2: 'Kiwi.com, Google Flights and Kayak, plus low-cost airlines\' own sites where they apply. You always buy on the airline\'s or agent\'s site, never through the bot.',
+      q3: 'What does the bot know about me?', a3: 'Only your search (route, dates, passengers, price limit), your Telegram first name and chat id. It is all stored encrypted. /stop in the bot deletes everything.',
+      q4: 'How fast does the bot answer?', a4: 'Within a few minutes, not instantly. The first results arrive about 20 minutes after you sign up.',
+      q5: 'It says there is a waitlist. Why?', a5: 'The number of users is limited to keep the searches fast. When the bot is full you get in line, and you get a message when a place opens up.',
       noInviteTitle: '🔒 Invite link needed', noInviteText: 'Sign-up is by invite link only. Ask the person who shared the bot with you for the link.',
       testBar: '🧪 Test mode: after "Confirm" you only see a summary; nothing is sent to the bot.',
       editBar: '✏️ Update settings: the form is filled with your current settings. Change what you want and save; the new settings replace the old ones.',
@@ -386,7 +429,7 @@
       ilsHint: 'About ₪{a}{b} at a rough rate', perPax: ' per passenger', advPrice: 'Advanced filters: layovers and separate tickets',
       maxLayover: 'Longest layover (hours)', selfTransfer: 'Allow separate tickets with self-transfer (cheaper, but not protected if a flight is late)',
       submit: 'Confirm and continue in Telegram', submitEdit: 'Save changes in Telegram', fix: 'Please fix:',
-      privacy: 'Your details go only to the Telegram bot and are stored encrypted. The person who shared the bot with you can see your search (route, dates and price limit). You can stop any time with /stop in the bot.',
+      privacy: 'Your details go only to the Telegram bot and are stored encrypted. The bot\'s operator can see your search (route, dates and price limit) and your Telegram first name. You can stop any time with /stop in the bot, which deletes your details.',
       previewTitle: '🧪 Test mode: this is what the bot would receive', previewNote: 'Nothing was sent to the bot, and the existing sign-up did not change.', code: 'Code:', backToForm: 'Back to the form',
       almostDone: 'Almost done', openBot: 'Open the bot in Telegram', step1: 'In Telegram, tap <b>Start</b> at the bottom.',
       step2: 'No Start button? Copy this message and send it to the bot:', copy: 'Copy', copied: 'Copied ✓',
@@ -408,6 +451,7 @@
   try { if (params.get('p')) EDIT = FlightCodec.decode(params.get('p')); } catch (e) { EDIT = null; }
   var invite = (EDIT && EDIT.invite) || (params.get('i') || '').trim();
   try { if (invite) localStorage.setItem('fw-invite', invite); else invite = localStorage.getItem('fw-invite') || ''; } catch (e) {}
+  if (OPEN && !/^[A-Za-z0-9_-]{6}$/.test(invite)) invite = PUBLIC_INVITE; // open sign-up: no invite link needed
   var lang = params.get('lang') || (EDIT && EDIT.lang) || (function () { try { return localStorage.getItem('fw-lang'); } catch (e) { return null; } }()) || 'he';
   if (!T[lang]) lang = 'he';
   var t = function (k) { return T[lang][k]; };
@@ -452,9 +496,10 @@
     applyLang(false);
   });
 
-  if (!/^[A-Za-z0-9_-]{6}$/.test(invite)) { applyLang(true); $('noInvite').style.display = 'block'; $('form').hidden = true; return; }
+  if (!/^[A-Za-z0-9_-]{6}$/.test(invite)) { applyLang(true); $('noInvite').style.display = 'block'; $('form').hidden = true; $('how').hidden = true; return; }
   if (TEST) $('testBar').hidden = false;
   if (EDIT) $('editBar').hidden = false;
+  if (EDIT || TEST) { $('how').hidden = true; $('faq').hidden = true; } // returning users go straight to the form
 
   var iso = function (d) { return new Date(d.getTime() - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10); };
   var todayIso = iso(new Date());
