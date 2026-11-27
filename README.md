@@ -12,6 +12,14 @@ Everything runs on free GitHub services: GitHub Actions (searches and the bot) a
   (`docs/codec.js`) and opens `t.me/<bot>?start=<code>`. Sign-up needs an invite link (`?i=<invite>`).
 - **Bot** (`bot.js`, every 5 minutes): reads new Telegram messages, checks the invite, validates the preferences,
   stores the user and starts a first search. Commands: `/status`, `/edit` (link to the user's own form, prefilled; saving it replaces their settings), `/price`, `/dest`, `/out`, `/back` (change one setting in the chat), `/lang`, `/stop` (deletes the user's data), `/help`. One user per Telegram chat: any update replaces that user's settings.
+- **Trips** ("כמה טיסות" in the form): 2 to 5 one-way flights in one sign-up. Each flight has its own route, dates,
+  passengers, stops, airline and price limit; cabin and bags are shared. Each flight is searched on its own (the day's
+  Google and Kayak budgets are split between the flights, so a trip makes about as many searches as one round trip),
+  alerts come per flight when that flight is under its own limit, and the daily summary has two lines per flight plus
+  the trip total for all passengers. Code v5 (`docs/codec.js`): about 44 characters for 3 flights; a code over 64
+  characters (many flights with many filters) does not fit in a Telegram link, so the page asks to paste `/start CODE`
+  to the bot (up to 200 characters). In the chat: `/price 2 400` (flight 2) or `/price 400` (every flight); dates and
+  places change through `/edit`. One ticket for the whole trip (multi-city) is planned for a later phase.
 - **Search** (`watch.js`, every 4 hours + one daily summary at 21:00 Israel time; a summary run outside 20:45–24:00 or a second one the same day runs as a plain check; a new user's first results come right away): one job per user, in parallel. Sources:
   - Kayak in a headless browser, Israel (with Kayak's checked-bag filter) and Australia (prices in AUD, converted;
     its bag filter has no effect, so bags show as unknown), "±3 days" grids: one-way outbound, one-way returns, and round trips.
@@ -78,6 +86,7 @@ Everything runs on free GitHub services: GitHub Actions (searches and the bot) a
 | `realertDropUsd`, `realertHours` | when to alert again |
 | `markets` | Kayak sites; `bagFilter` makes prices include a checked bag |
 | `kiwi`, `googleDaily`, `googleMaxSearches`, `duffelEveryHours` | sources on/off, Google searches a day |
+| `pausedUsers` | user ids that are paused: no searches and no messages; their settings and state stay (remove the id to turn them back on) |
 | `userExtras` | per user (random id): `preferAirlines` codes get their own nonstop Kiwi searches and are shown first (⭐) |
 
 ## Local test
