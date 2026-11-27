@@ -19,6 +19,33 @@ const au = 'Go to result details\n16/01\n12:05 – 10:15+1\nBBB City\n-\nAAA Air
 const a = parseKayakCards(au, 'AUD')[0];
 assert.deepEqual([a.legs[0].date, a.legs[0].stops, Math.round(a.legs[0].hours*60), a.price, a.airline], ['2031-01-16',1,910,1127,'Air Canada']);
 console.log('all rule and parser tests passed');
+// Click tracking: links go through the Worker with a signature the Worker accepts; the counts land in logs/clicks.csv
+{
+  const C = require('./lib/clicks');
+  const L = require('./lib/logs');
+  const fs = require('fs'); const px = require('path');
+  const cfg = { url: 'https://clicks.example.workers.dev', secret: 's3cret' };
+  const msg = '<a href="https://www.kayak.com/flights/AAA-BBB/2031-01-01?sort=price_a&amp;fs=stops=0">Kayak</a> · <a href="https://wizzair.com/x">Wizz Air</a>';
+  const out = C.trackLinks(msg, 'u0000000001', 'alert', cfg);
+  const hrefs = [...out.matchAll(/href="([^"]+)"/g)].map((m) => new URL(m[1]));
+  assert.equal(hrefs.length, 2);
+  assert.equal(hrefs[0].origin + hrefs[0].pathname, 'https://clicks.example.workers.dev/c');
+  assert.equal(hrefs[0].searchParams.get('to'), 'https://www.kayak.com/flights/AAA-BBB/2031-01-01?sort=price_a&fs=stops=0');
+  assert.deepEqual(['u', 's', 't'].map((k) => hrefs[0].searchParams.get(k)), ['u0000000001', 'kayak', 'alert']);
+  assert.equal(hrefs[1].searchParams.get('s'), 'airline');
+  assert.equal(hrefs[0].searchParams.get('k'), C.sign('s3cret', `u0000000001|kayak|alert|${hrefs[0].searchParams.get('to')}`));
+  assert.equal(C.trackLinks(msg, 'u0000000001', 'alert', { url: '', secret: '' }), msg); // off until set up
+  const dir = fs.mkdtempSync(px.join(require('os').tmpdir(), 'clicks-'));
+  const today = new Date().toISOString().slice(0, 10);
+  C.mergeClicks({ [`${today}|u0000000001|kayak|alert`]: 2, [`${today}|u0000000002|google|summary`]: 1, bad: 5 }, dir);
+  C.mergeClicks({ [`${today}|u0000000001|kayak|alert`]: 3 }, dir);
+  const rows = L.readCsv('clicks.csv', dir);
+  assert.deepEqual(rows.map((r) => [r.user, r.site, r.clicks]), [['u0000000001', 'kayak', '3'], ['u0000000002', 'google', '1']]);
+  assert.ok(!fs.readFileSync(px.join(dir, 'clicks.csv'), 'utf8').includes('http'));
+  assert.equal(C.mergeClicks({ [`${today}|u0000000001|kayak|alert`]: 3 }, dir), 0); // nothing new: file untouched
+  console.log('click tracking tests passed');
+}
+
 
 // pickDiverse: one option per trip type first, then different outbound dates
 {
@@ -268,4 +295,161 @@ console.log('kayak filter test passed');
   const sm = L.summarize(24, Date.now(), dir);
   assert.ok(sm.includes('✉️ הודעות שנשלחו: 4 · סיכומים 1 · התראות 1 · תשובות בצ׳אט 1'), sm);
   console.log('message log tests passed');
+}
+
+// Trips (several one-way flights): v5 code, validation, chat commands, per-flight alerts and the short summary
+{
+  const C = require('./docs/codec.js');
+  const trip = { trip: true, invite: 'Ab3_x9', lang: 'he', checkedBags: 0, carryOn: 1, legs: [
+    { origin: 'TLV', destination: 'BKK', adults: 1, outFrom: '2030-01-10', outTo: '2030-01-16', maxPrice: 450, outMaxStops: 1 },
+    { origin: 'BKK', destination: 'CNX', adults: 2, outFrom: '2030-01-20', outTo: '2030-01-22', maxPrice: 60, outMaxStops: 0, airline: 'FD' },
+    { origin: 'CNX', destination: 'NRT', adults: 2, outFrom: '2030-02-01', outTo: '2030-02-03', maxPrice: 300, outMaxStops: 1, outDepFrom: 6, outDepTo: 20, outMaxHours: 9 }] };
+  const code = C.encode(trip);
+  assert.ok(code.length <= C.TG_MAX, `3 flights fit in a Telegram link (${code.length})`);
+  const q = C.decode(code);
+  assert.equal(q.trip, true); assert.equal(q.legs.length, 3);
+  assert.deepEqual(q.legs.map((l) => [l.origin, l.destination, l.adults, l.outFrom, l.outTo, l.maxPrice, l.airline, l.outMaxStops]),
+    [['TLV', 'BKK', 1, '2030-01-10', '2030-01-16', 450, '', 1], ['BKK', 'CNX', 2, '2030-01-20', '2030-01-22', 60, 'FD', 0], ['CNX', 'NRT', 2, '2030-02-01', '2030-02-03', 300, '', 1]]);
+  assert.deepEqual([q.legs[2].outDepFrom, q.legs[2].outDepTo, q.legs[2].outMaxHours, q.checkedBags, q.carryOn], [6, 20, 9, 0, 1]);
+  assert.deepEqual(C.validate(q, '2029-12-01'), []);
+  const lp = C.legPrefs(q, 1);
+  assert.deepEqual([lp.oneWay, lp.origin, lp.adults, lp.checkedBags, lp.maxPrice], [true, 'BKK', 2, 0, 60]);
+  // five flights, different origins, passengers and prices: still decodes (a long code is pasted to the bot)
+  const L = (o, d, i) => ({ origin: o, destination: d, adults: 1 + (i % 3), children: i % 2, outFrom: `2030-0${i + 1}-01`, outTo: `2030-0${i + 1}-31`, maxPrice: 1000 + i, outMaxStops: 2, airline: 'LY', outMaxHours: 20, outDepFrom: 6, outDepTo: 22 });
+  const five = { trip: true, invite: 'Ab3_x9', lang: 'en', legs: [L('TLV', 'BKK', 0), L('LHR', 'CNX', 1), L('JFK', 'NRT', 2), L('CDG', 'MIA', 3), L('ATH', 'FCO', 4)] };
+  const fc = C.encode(five);
+  assert.ok(fc.length > C.TG_MAX && fc.length <= C.MAX_CODE);
+  assert.deepEqual(C.decode(fc).legs[4], { ...L('ATH', 'FCO', 4), infants: 0 });
+  // errors carry the flight number
+  const bad = { ...trip, legs: [trip.legs[0], { ...trip.legs[1], outFrom: '2030-01-05', outTo: '2030-01-05' }, { ...trip.legs[2], destination: 'CNX' }] };
+  const e = C.validate(bad, '2029-12-01');
+  assert.ok(e.some((x) => x.startsWith('טיסה 2:')) && e.some((x) => x.startsWith('טיסה 3:')), e.join(' | '));
+  assert.ok(C.validate({ ...trip, legs: [trip.legs[0]] }, '2029-12-01').length, 'at least two flights');
+  assert.ok(C.validate({ ...trip, legs: [...trip.legs, ...trip.legs] }, '2029-12-01').length, 'at most five flights');
+  assert.ok(C.validate({ ...trip, legs: [{ ...trip.legs[0], outTo: '2030-03-30' }, trip.legs[1]] }, '2029-12-01').some((x) => x.includes('31')), 'a flight range is at most 31 days');
+  // old codes keep working, and a long code is only accepted for trips
+  const rt = { invite: 'Ab3_x9', origin: 'TLV', destination: 'ATH', outFrom: '2030-11-14', outTo: '2030-11-20', retFrom: '2030-11-24', retTo: '2030-11-26', maxPrice: 300 };
+  assert.equal(C.decode(C.encode(rt)).destination, 'ATH');
+  assert.throws(() => C.decode(C.encode(rt) + 'AAAAAAAAAAAAAAAAAAAAAAAAAAAA'));
+  assert.ok(C.describe(q, 'he').join('\n').includes('מסע: 3 טיסות'));
+  assert.ok(C.describe(q, 'en').join('\n').includes('Trip: 3 flights'));
+  console.log('trip code tests passed');
+
+  // engine: per-flight alert rule, total, short leg text
+  const W = require('./watch.js');
+  const now = new Date('2030-01-01T12:00:00Z');
+  W.useProfile(lp, 'leg2');
+  const c = (usd, date) => ({ kind: 'ow', out: date, usd, offers: [{ usd, source: 'kiwi.com', url: 'https://k', bags: [1, 0], legs: [{ date, time: '08:30 – 10:00', stops: 0, airline: 'Thai AirAsia' }] }] });
+  assert.equal(W.legShouldAlert([], null, now), false);
+  assert.equal(W.legShouldAlert([c(50, '2030-01-21')], null, now), true);
+  assert.equal(W.legShouldAlert([c(50, '2030-01-21')], { at: '2030-01-01T10:00:00Z', usd: 52 }, now), false, 'not again within hours for a small drop');
+  assert.equal(W.legShouldAlert([c(40, '2030-01-21')], { at: '2030-01-01T10:00:00Z', usd: 52 }, now), true, 'again after a $10 drop');
+  const txt = W.tripLegText(1, [c(31, '2030-01-20'), c(33, '2030-01-21'), c(40, '2030-01-22')], true);
+  assert.ok(txt.startsWith('2️⃣ <b>בנגקוק → צ׳יאנג מאי</b> · 20–22.1 · 2 נוסעים · סף $60'), txt);
+  assert.equal(txt.split('\n').length, 3, 'cheapest + one more within 10% on another date');
+  assert.ok(txt.includes('לנוסע') && txt.includes('airasia.com'));
+  assert.equal(W.tripLegText(1, [], true).split('\n')[1].trim(), 'לא נמצא מחיר מתאים');
+  assert.deepEqual(W.tripTotal([{ i: 0, pax: 1, best: { usd: 365 } }, { i: 1, pax: 2, best: { usd: 31 } }, { i: 2, pax: 2, best: null }]), { usd: 427, missing: [3] });
+  assert.equal(W.legSig(lp), 'BKK|CNX|2030-01-20|2030-01-22|2|0|0');
+  console.log('trip engine tests passed');
+
+  // bot: trip owner line, paused users, /price for one flight
+  const bot = require('./bot.js');
+  assert.equal(bot.routeOf(q), 'מסע: תל אביב → בנגקוק → צ׳יאנג מאי → טוקיו');
+  assert.ok(bot.userLine({ prefs: q }).includes('3 טיסות') && bot.userLine({ prefs: q }).includes('$450/$60/$300'));
+  assert.equal(bot.isPaused({ id: 'uab7fee9cec' }), true);
+  assert.equal(bot.isPaused({ id: 'u0000000001' }), false);
+  console.log('trip bot tests passed');
+}
+
+// Languages, currencies and time zones (docs/i18n.js, docs/locales, docs/regions.js)
+{
+  const fs = require('fs'); const px = require('path');
+  const I = require('./docs/i18n.js'); const R = require('./docs/regions.js'); const C = require('./docs/codec.js');
+  C.setPlaces(JSON.parse(fs.readFileSync('./docs/airports.json', 'utf8')));
+  // every language: a file, a number in the code, a <script> in the page, and every English text key
+  const keys = (o, p = '') => Object.entries(o).flatMap(([k, v]) => (v && typeof v === 'object' && !Array.isArray(v) && v.other == null ? keys(v, p + k + '.') : [p + k]));
+  const files = fs.readdirSync('./docs/locales').filter((f) => f.endsWith('.js')).map((f) => f.slice(0, -3)).sort();
+  assert.deepEqual(files, [...I.AVAILABLE].sort(), 'every file in docs/locales is listed in i18n.js AVAILABLE');
+  const page = fs.readFileSync('./docs/index.html', 'utf8');
+  for (const code of I.AVAILABLE) {
+    assert.ok(C.LANGS.includes(code), `${code} has a number in the form code (codec.js LANGS)`);
+    assert.ok(page.includes(`<script src="locales/${code}.js">`), `${code} is loaded by the page`);
+    const missing = ['form', 'codec', 'bot', 'owner', 'search'].flatMap((s) => keys(I.get('en')[s], s + '.').filter((k) => I.t(code, k) === '' && I.t('en', k) !== ''));
+    assert.ok(!keys(I.get(code)).length || true);
+    const own = new Set(['form', 'codec', 'bot', 'owner', 'search'].flatMap((s) => keys(I.get(code)[s] || {}, s + '.')));
+    const absent = ['form', 'codec', 'bot', 'owner', 'search'].flatMap((s) => keys(I.get('en')[s], s + '.')).filter((k) => !own.has(k));
+    assert.deepEqual(code === 'en' ? [] : absent, [], `${code}: texts missing (they would show in English)`);
+    assert.deepEqual(missing, []);
+  }
+  // fallback, plurals, language tags
+  assert.equal(I.t('xx', 'bot.alreadyIn'), I.t('en', 'bot.alreadyIn'));
+  assert.equal(I.t('he', 'codec.adultsN', 1), '1 מבוגר'); assert.equal(I.t('he', 'codec.adultsN', 3), '3 מבוגרים');
+  assert.equal(I.t('en', 'codec.childrenN', 2), '2 children');
+  assert.deepEqual(['he-IL', 'iw', 'en-US', 'pt-BR', ''].map(I.resolve), ['he', 'he', 'en', 'en', 'en']);
+  assert.deepEqual([I.find('English'), I.find('עברית'), I.find('he'), I.find('klingon')], ['en', 'he', 'he', '']);
+  assert.deepEqual([I.money(1234.4, 'USD'), I.money(1000, 'ILS'), I.money(5, 'EUR'), I.money(9, 'CHF')], ['$1,234', '₪1,000', '€5', 'CHF 9']);
+  // every zone and currency is real; defaults from the origin
+  for (const z of R.ZONES.slice(1)) new Intl.DateTimeFormat('en', { timeZone: z });
+  assert.equal(new Set(R.ZONES).size, R.ZONES.length); assert.equal(new Set(R.CURRENCIES).size, R.CURRENCIES.length);
+  assert.deepEqual(C.localOf({ origin: 'TLV' }), { currency: 'ILS', tz: 'Asia/Jerusalem', country: 'IL' });
+  assert.deepEqual(C.localOf({ origin: 'LAX' }), { currency: 'USD', tz: 'America/Los_Angeles', country: 'US' });
+  assert.deepEqual(C.localOf({ origin: 'JFK', currency: 'EUR', tz: 'Europe/Berlin' }), { currency: 'EUR', tz: 'Europe/Berlin', country: 'US' });
+  assert.equal(R.findZone('berlin'), 'Europe/Berlin'); assert.equal(R.findZone('America/new_york'), 'America/New_York'); assert.equal(R.findZone('mars'), '');
+  assert.deepEqual(R.clock(new Date('2030-07-01T18:30:00Z'), 'America/New_York'), { day: '2030-07-01', minutes: 14 * 60 + 30 });
+  // the code carries language, currency and time zone; old v4/v5 codes still decode
+  const p = { invite: 'Ab3_x9', origin: 'ORD', destination: 'ATH', outFrom: '2030-11-14', outTo: '2030-11-20', retFrom: '2030-11-24', retTo: '2030-11-26', maxPrice: 300, lang: 'en', currency: 'USD', tz: 'America/Chicago' };
+  const code = C.encode(p); const q = C.decode(code);
+  assert.ok(code.length <= C.TG_MAX);
+  assert.deepEqual([q.lang, q.currency, q.tz], ['en', 'USD', 'America/Chicago']);
+  const auto = C.decode(C.encode({ ...p, currency: '', tz: '' }));
+  assert.deepEqual([auto.currency, auto.tz], [undefined, undefined], 'automatic stays automatic');
+  assert.ok(C.validate({ ...p, tz: 'Mars/Base' }, '2030-11-01', 'en').some((e) => /time zone/.test(e)));
+  assert.ok(C.validate({ ...p, currency: 'XXX' }, '2030-11-01', 'en').some((e) => /currency/.test(e)));
+  const v4 = C.decode('QBvf_H2a6gmcQAwAAAGG8gDAAEAGG_ABAAAJZ');
+  assert.deepEqual([v4.origin, v4.destination, v4.lang, v4.maxPrice, v4.currency], ['TLV', 'ATH', 'en', 300, undefined]);
+  const v5 = C.decode('UBvf_H2RgTXUKlCAW-MAHCibeuQIAA8');
+  assert.deepEqual([v5.trip, v5.lang, v5.legs.length, v5.legs[1].destination], [true, 'en', 2, 'CNX']);
+  const trip = C.decode(C.encode({ ...v5, tz: 'Asia/Bangkok', currency: 'THB' }));
+  assert.deepEqual([trip.tz, trip.currency, C.legPrefs(trip, 1).tz], ['Asia/Bangkok', 'THB', 'Asia/Bangkok']);
+  assert.ok(C.describe(q, 'en').join('\n').includes('🌍 Currency USD · time zone America/Chicago'));
+  console.log('language, currency and time zone tests passed');
+}
+
+// Markets by origin; the daily summary at 21:00 on each user's clock
+{
+  const W = require('./watch.js');
+  assert.deepEqual(W.marketsFor('IL').map((m) => m.key), ['il', 'au']);
+  assert.deepEqual(W.marketsFor('US').map((m) => m.key), ['us']);
+  assert.deepEqual(W.marketsFor('FR').map((m) => m.key), ['uk', 'au']);
+  assert.deepEqual(W.googleMarketsFor('US'), [{ gl: 'US' }]); assert.deepEqual(W.googleMarketsFor('IL'), [{ gl: 'IL' }]);
+  assert.equal(W.configFor({ origin: 'JFK', destination: 'LAX', outFrom: '2030-12-01', outTo: '2030-12-05', oneWay: true, maxPrice: 300 }).googleMarkets[0].gl, 'US');
+  // US Kayak writes dates month first
+  const us = 'Go to result details\n1/16\n12:05 – 10:15+1\nORD\n-\nATH\n1 stop\n15h 10m\nUnited\n$1,127\nEconomy\n';
+  assert.equal(W.parseKayakCards(us, 'USD', true)[0].legs[0].date.slice(5), '01-16');
+  const L = require('./lib/list-users.js');
+  const ny = { prefs: { origin: 'JFK' } }; const tlv = { prefs: { origin: 'TLV' } };
+  const at = new Date('2030-12-01T19:00:00Z'); // 21:00 in Israel, 14:00 in New York
+  assert.deepEqual([L.summaryDue(tlv, {}, at), L.summaryDue(ny, {}, at)], [true, false]);
+  assert.equal(L.summaryDue(tlv, { lastSummaryDay: '2030-12-01' }, at), false, 'one summary a day');
+  assert.equal(L.summaryDue(ny, {}, new Date('2030-12-02T02:00:00Z')), true, '21:00 in New York');
+  console.log('market and summary time tests passed');
+}
+
+// Search messages in English for a US user (a separate run: watch.js reads its user when it loads)
+{
+  const os = require('os'); const fsx = require('fs'); const px = require('path'); const { execFileSync } = require('child_process');
+  const dir = fsx.mkdtempSync(px.join(os.tmpdir(), 'en-'));
+  const prof = px.join(dir, 'p.json');
+  fsx.writeFileSync(prof, JSON.stringify({ id: 'test', prefs: { origin: 'JFK', destination: 'ATH', outFrom: '2030-12-16', outTo: '2030-12-20', oneWay: true, maxPrice: 600, lang: 'en', checkedBags: 1, carryOn: 1 } }));
+  const script = px.join(dir, 's.js');
+  fsx.writeFileSync(script, `const W = require(${JSON.stringify(px.resolve('watch.js'))});
+const o = { kind: 'out', usd: 450, source: 'kiwi.com', url: 'https://k', bags: [1, 1], legs: [{ date: '2030-12-17', time: '18:00 – 11:00+1', stops: 1, hours: 10.5, airline: 'El Al Israel Airlines' }] };
+console.log(JSON.stringify({ c: W.candText({ kind: 'ow', out: '2030-12-17', usd: 450, offers: [o] }, 0), type: W.tripType({ kind: 'ow', offers: [o] }), local: W.LOCAL, lang: W.LANG }));`);
+  const out = JSON.parse(execFileSync(process.execPath, [script, '--profile', prof], { env: { ...process.env, TELEGRAM_BOT_TOKEN: 'x' } }).toString());
+  assert.equal(out.lang, 'en'); assert.deepEqual([out.local.currency, out.local.tz], ['USD', 'America/New_York']);
+  assert.ok(!/[֐-׿]/.test(out.c), out.c);
+  assert.ok(out.c.includes('Book on kiwi.com') && out.c.includes('Thu 19 Dec') === false && out.c.includes('Tue 17 Dec') && out.c.includes('1 stop') && out.c.includes('checked bag included'), out.c);
+  assert.equal(out.type, 'One way');
+  console.log('English search message tests passed');
 }

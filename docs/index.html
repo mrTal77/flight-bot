@@ -47,6 +47,13 @@
   .seg label { text-align: center; padding: 8px; border-radius: 8px; cursor: pointer; color: var(--text); font-size: 15px; }
   .seg input:checked + label { background: var(--card); box-shadow: 0 1px 2px rgba(0,0,0,.12); font-weight: 600; }
   .seg-sm label { padding: 6px; font-size: 14px; }
+  .seg3 { grid-template-columns: 1fr 1fr 1fr; }
+  .leg h2 { justify-content: space-between; }
+  .leg-tools { display: flex; gap: 6px; }
+  .leg-tools button { width: 34px; height: 32px; padding: 0; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font-size: 15px; font-weight: 400; }
+  .leg-tools button:disabled { opacity: .35; cursor: default; }
+  .add-leg { background: var(--soft); color: var(--accent); border: 1px dashed var(--accent); margin-bottom: 14px; }
+  .add-leg:disabled { opacity: .5; cursor: default; }
   .check { display: flex; gap: 10px; align-items: center; padding: 6px 0; color: var(--text); font-size: 15px; }
   .check input { width: 20px; height: 20px; accent-color: var(--accent); flex: none; }
   .hint { font-size: 13px; color: var(--muted); margin: -4px 0 8px; }
@@ -96,7 +103,7 @@
 </head>
 <body>
 <main>
-  <div class="top"><button type="button" class="lang" id="langBtn">English</button></div>
+  <div class="top"><select class="lang" id="langSel" aria-label="Language"></select></div>
   <header>
     <h1 data-t="title"></h1>
     <p class="lead" data-t="lead"></p>
@@ -113,10 +120,13 @@
   <form id="form" novalidate>
     <section class="card">
       <h2><span class="n">1</span> <span data-t="secRoute"></span></h2>
-      <div class="seg" role="radiogroup">
+      <div class="seg seg3" role="radiogroup">
         <input type="radio" name="trip" id="tripRt" value="rt" checked><label for="tripRt" data-t="roundTrip"></label>
         <input type="radio" name="trip" id="tripOw" value="ow"><label for="tripOw" data-t="oneWay"></label>
+        <input type="radio" name="trip" id="tripMulti" value="multi"><label for="tripMulti" data-t="multiTrip"></label>
       </div>
+      <p class="hint" id="multiHint" hidden data-t="multiHint"></p>
+      <div id="singleRoute">
       <div class="row route">
         <div class="field place"><label for="originQ" data-t="origin"></label>
           <input id="originQ" class="place-q" data-target="origin" autocomplete="off" data-tp="placePh" role="combobox" aria-expanded="false" aria-controls="originList">
@@ -132,6 +142,7 @@
         <div class="field"><label for="children" data-t="children"></label><select id="children"></select></div>
         <div class="field"><label for="infants" data-t="infants"></label><select id="infants"></select></div>
       </div>
+      </div>
       <div class="field"><label for="cabin" data-t="cabin"></label><select id="cabin" data-opts="cabins"></select></div>
       <div class="row">
         <div class="field"><label for="checkedBags" data-t="checkedBags"></label><select id="checkedBags" data-opts="bags"></select></div>
@@ -140,7 +151,12 @@
       <p class="hint" data-t="bagsHint"></p>
     </section>
 
-    <section class="card">
+    <div id="tripBox" hidden>
+      <div id="legs"></div>
+      <button type="button" class="add-leg" id="addLeg" data-t="addLeg"></button>
+    </div>
+
+    <section class="card" id="outCard">
       <h2><span class="n">2</span> <span data-t="secOut"></span></h2>
       <div class="seg seg-sm" role="radiogroup">
         <input type="radio" name="outMode" id="outFlex" value="flex" checked><label for="outFlex" data-t="flexDate"></label>
@@ -205,11 +221,19 @@
 
     <section class="card">
       <h2><span class="n" id="lastNum">4</span> <span data-t="secPrice"></span></h2>
+      <div id="singlePrice">
       <div class="field">
         <label for="maxPrice" id="priceLabel"></label>
         <div class="usd"><input type="number" id="maxPrice" min="20" max="32767" placeholder="1000" inputmode="numeric"><span>$</span></div>
       </div>
-      <p class="hint" id="ilsHint"></p>
+      <p class="hint" id="localHint"></p>
+      </div>
+      <p class="hint" id="tripPriceHint" hidden data-t="tripPriceHint"></p>
+      <div class="row">
+        <div class="field"><label for="currency" data-t="currency"></label><select id="currency"></select></div>
+        <div class="field"><label for="tz" data-t="tz"></label><select id="tz"></select></div>
+      </div>
+      <p class="hint" data-t="localNote"></p>
       <details>
         <summary data-t="advPrice"></summary>
         <div>
@@ -236,8 +260,9 @@
     <div class="big">✅</div>
     <h2 style="justify-content:center" data-t="almostDone"></h2>
     <a class="go" id="tgLink" href="#" rel="noopener" data-t="openBot"></a>
+    <p class="note" id="longCode" hidden data-t="longCode"></p>
     <ol>
-      <li data-t="step1" data-html="1"></li>
+      <li data-t="step1" data-html="1" id="step1"></li>
       <li><span data-t="step2"></span>
         <div class="copy"><code id="startMsg" dir="ltr"></code><button type="button" id="copyBtn" data-t="copy"></button></div></li>
       <li data-t="step3"></li>
@@ -247,77 +272,76 @@
   </section>
 </main>
 
+<template id="legTpl">
+  <section class="card leg">
+    <h2><span><span class="n leg-no">1</span> <span data-t="flight"></span> <span class="leg-no-text"></span></span>
+      <span class="leg-tools"><button type="button" class="leg-up">⬆</button><button type="button" class="leg-down">⬇</button><button type="button" class="leg-del">🗑</button></span></h2>
+    <div class="row route">
+      <div class="field place"><label data-t="origin"></label>
+        <input class="leg-q" data-k="origin" autocomplete="off" data-tp="placePh" role="combobox" aria-expanded="false">
+        <input type="hidden" class="leg-origin"><ul class="place-list" role="listbox" hidden></ul></div>
+      <button type="button" class="swap leg-swap">⇄</button>
+      <div class="field place"><label data-t="destination"></label>
+        <input class="leg-q" data-k="destination" autocomplete="off" data-tp="placePh" role="combobox" aria-expanded="false">
+        <input type="hidden" class="leg-destination"><ul class="place-list" role="listbox" hidden></ul></div>
+    </div>
+    <div class="seg seg-sm" role="radiogroup">
+      <input type="radio" class="leg-flex" value="flex" checked><label data-t="flexDate"></label>
+      <input type="radio" class="leg-range" value="range"><label data-t="dateRange"></label>
+    </div>
+    <div class="row leg-flex-box">
+      <div class="field"><label data-t="aboutDate"></label><input type="date" class="leg-date"></div>
+      <div class="field"><label data-t="flexibility"></label><select class="leg-flexibility" data-opts="flex" data-default="3"></select></div>
+    </div>
+    <div class="row leg-range-box" hidden>
+      <div class="field"><label data-t="fromDate"></label><input type="date" class="leg-from"></div>
+      <div class="field"><label data-t="toDate"></label><input type="date" class="leg-to"></div>
+    </div>
+    <label class="check leg-same-box"><input type="checkbox" class="leg-same" checked> <span data-t="samePax"></span></label>
+    <div class="row3 leg-pax">
+      <div class="field"><label data-t="adults"></label><select class="leg-adults"></select></div>
+      <div class="field"><label data-t="children"></label><select class="leg-children"></select></div>
+      <div class="field"><label data-t="infants"></label><select class="leg-infants"></select></div>
+    </div>
+    <div class="row">
+      <div class="field"><label data-t="stops"></label><select class="leg-stops" data-opts="stops" data-default="1"></select></div>
+      <div class="field"><label class="leg-price-label"></label>
+        <div class="usd"><input type="number" class="leg-price" min="20" max="32767" placeholder="400" inputmode="numeric"><span>$</span></div></div>
+    </div>
+    <details>
+      <summary data-t="advLeg"></summary>
+      <div>
+        <div class="field"><label data-t="airline"></label><select class="leg-airline" data-opts="airlines"></select></div>
+        <div class="field" hidden><label data-t="airlineCode"></label><input class="code leg-airline-other" maxlength="2" placeholder="BA"></div>
+        <div class="field"><label data-t="maxHours"></label><input type="number" class="leg-hours" min="0" max="63" value="0" inputmode="numeric"></div>
+        <p class="hint" data-t="zeroNoLimit"></p>
+        <div class="row">
+          <div class="field"><label data-t="depFrom"></label><select class="leg-dep-from hour-from"></select></div>
+          <div class="field"><label data-t="depTo"></label><select class="leg-dep-to hour-to"></select></div>
+        </div>
+      </div>
+    </details>
+  </section>
+</template>
+
+<!-- languages: one file each in locales/ (listed in i18n.js "AVAILABLE"); add a <script> line here for a new one -->
+<script src="i18n.js"></script>
+<script src="regions.js"></script>
+<script src="locales/he.js"></script>
+<script src="locales/en.js"></script>
 <script src="codec.js"></script>
 <script>
 (function () {
   'use strict';
   var BOT = 'Ffffffflightticketbot';
-  var ILS_PER_USD = 3.2; // rough, for the hint only; the bot uses the day's real rate
+  // Rough rates for the hint only (the bot uses the day's real rate); replaced by today's rates when they load.
+  var RATES = { USD: 1, ILS: 3.2, EUR: 0.92, GBP: 0.78 };
   var $ = function (id) { return document.getElementById(id); };
 
   // ---------- texts ----------
-  var T = {
-    he: {
-      title: '✈️ בוט מחירי טיסות', lead: 'ממלאים איזו טיסה מחפשים, והבוט בטלגרם בודק מחירים כל כמה שעות ושולח התראה כשהמחיר יורד מתחת לסף שבחרתם.',
-      noInviteTitle: '🔒 צריך קישור הזמנה', noInviteText: 'ההרשמה פתוחה רק דרך קישור הזמנה. בקשו את הקישור ממי ששיתף איתכם את הבוט.',
-      testBar: '🧪 מצב בדיקה: אחרי "אישרתי" יוצג סיכום בלבד, בלי לשלוח כלום לבוט.',
-      editBar: '✏️ עדכון הגדרות: הטופס מולא בהגדרות הנוכחיות שלכם. משנים מה שרוצים ושומרים, וההגדרות החדשות יחליפו את הקודמות.',
-      secRoute: 'מסלול ונוסעים', roundTrip: 'הלוך-חזור', oneWay: 'כיוון אחד', origin: 'מוצא', destination: 'יעד', swap: 'החלפה בין המוצא ליעד', placePh: 'עיר, שדה או קוד',
-      placeHint: 'אפשר לחפש בעברית או באנגלית: עיר, שם שדה, מדינה או קוד (למשל לונדון, Zanzibar, יוון, BKK). יותר מ-4,000 שדות בכל העולם.',
-      adults: 'מבוגרים', children: 'ילדים (2–11)', infants: 'תינוקות', cabin: 'מחלקה', checkedBags: 'מזוודות לנוסע', carryOn: 'תיק עלייה לנוסע',
-      bagsHint: 'הבוט מתריע על מחירים שהכבודה הזו כלולה בהם (מחיר שלא ידוע אם היא כלולה מסומן ב-*).',
-      secOut: 'הלוך', secRet: 'חזור', flexDate: 'תאריך גמיש', dateRange: 'טווח תאריכים', aboutDate: 'בערך בתאריך', flexibility: 'גמישות',
-      fromDate: 'מתאריך', toDate: 'עד תאריך', stops: 'עצירות', advOut: 'מסננים מתקדמים להלוך', advRet: 'מסננים מתקדמים לחזור',
-      airline: 'חברת תעופה', airlineCode: 'קוד החברה (2 תווים)', maxHours: 'משך הטיסה, עד (שעות)', retMaxHours: 'משך החזור, עד (שעות)',
-      maxTripDays: 'אורך הטיול, עד (ימים)', zeroNoLimit: '0 = בלי הגבלה.', depFrom: 'המראה משעה', depTo: 'עד שעה',
-      secPrice: 'מחיר והתראות', priceLabel: 'שלחו לי התראה כשהמחיר יורד מתחת ל-', priceLabelPax: 'שלחו לי התראה כשהמחיר לנוסע יורד מתחת ל-',
-      ilsHint: 'בערך ₪{a}{b} לפי שער משוער', perPax: ' לנוסע', advPrice: 'מסננים מתקדמים: עצירות ביניים וכרטיסים נפרדים',
-      maxLayover: 'עצירת ביניים ארוכה ביותר (שעות)', selfTransfer: 'לאפשר כרטיסים נפרדים עם העברה עצמית (זול יותר, אבל לא מוגן אם טיסה מתעכבת)',
-      submit: 'אישרתי, להמשיך לטלגרם', submitEdit: 'שמירת השינויים בטלגרם', fix: 'צריך לתקן:',
-      privacy: 'הפרטים נשלחים רק לבוט בטלגרם ונשמרים אצלו מוצפנים. מי ששיתף איתכם את הבוט רואה את פרטי החיפוש שלכם (מסלול, תאריכים וסף מחיר). אפשר להפסיק בכל רגע עם הפקודה ⁦/stop⁩ בבוט.',
-      previewTitle: '🧪 מצב בדיקה: זה מה שהבוט היה מקבל', previewNote: 'שום דבר לא נשלח לבוט, וההרשמה הקיימת לא השתנתה.', code: 'קוד:', backToForm: 'חזרה לטופס',
-      almostDone: 'כמעט סיימנו', openBot: 'פתיחת הבוט בטלגרם', step1: 'בטלגרם, לחצו על <b>Start / התחל</b> למטה.',
-      step2: 'לא מופיע כפתור Start? העתיקו את ההודעה הזו ושלחו אותה לבוט:', copy: 'העתקה', copied: 'הועתק ✓',
-      step3: 'תוך כמה דקות הבוט יאשר ויציג את הפרטים.', step4: 'החיפוש הראשון ישלח תוצאות תוך כ-10–20 דקות.', wantChange: 'רוצים לשנות משהו?',
-      opts: {
-        cabins: [['economy', 'תיירים (Economy)'], ['premium', 'פרימיום (Premium Economy)'], ['business', 'עסקים (Business)'], ['first', 'ראשונה (First)']],
-        bags: [['0', 'בלי מזוודה'], ['1', 'מזוודה 1'], ['2', '2 מזוודות']], yesNo: [['1', 'כן'], ['0', 'לא צריך']],
-        flex: [['0', 'בדיוק בתאריך הזה'], ['1', '±1 יום'], ['3', '±3 ימים'], ['5', '±5 ימים']],
-        stops: [['0', 'ישיר בלבד'], ['1', 'עד עצירה אחת'], ['2', 'עד 2 עצירות'], ['3', 'לא משנה']],
-        airlines: [['', 'כל חברה'], ['LY', 'אל על'], ['6H', 'ישראייר'], ['IZ', 'ארקיע'], ['other', 'אחרת (קוד)...']],
-      },
-    },
-    en: {
-      title: '✈️ Flight price bot', lead: 'Tell us which flight you are looking for. The Telegram bot checks prices every few hours and alerts you when the price drops below your limit.',
-      noInviteTitle: '🔒 Invite link needed', noInviteText: 'Sign-up is by invite link only. Ask the person who shared the bot with you for the link.',
-      testBar: '🧪 Test mode: after "Confirm" you only see a summary; nothing is sent to the bot.',
-      editBar: '✏️ Update settings: the form is filled with your current settings. Change what you want and save; the new settings replace the old ones.',
-      secRoute: 'Route and passengers', roundTrip: 'Round trip', oneWay: 'One way', origin: 'From', destination: 'To', swap: 'Swap from and to', placePh: 'City, airport or code',
-      placeHint: 'Search in English or Hebrew: city, airport, country or code (e.g. London, Zanzibar, Greece, BKK). Over 4,000 airports worldwide.',
-      adults: 'Adults', children: 'Children (2–11)', infants: 'Infants', cabin: 'Cabin', checkedBags: 'Checked bags per passenger', carryOn: 'Carry-on per passenger',
-      bagsHint: 'The bot alerts on prices that include these bags (a price where it is unknown is marked with *).',
-      secOut: 'Outbound', secRet: 'Return', flexDate: 'Flexible date', dateRange: 'Date range', aboutDate: 'Around', flexibility: 'Flexibility',
-      fromDate: 'From', toDate: 'To', stops: 'Stops', advOut: 'Advanced filters (outbound)', advRet: 'Advanced filters (return)',
-      airline: 'Airline', airlineCode: 'Airline code (2 characters)', maxHours: 'Flight time, up to (hours)', retMaxHours: 'Return flight time, up to (hours)',
-      maxTripDays: 'Trip length, up to (days)', zeroNoLimit: '0 = no limit.', depFrom: 'Departs from', depTo: 'Until',
-      secPrice: 'Price and alerts', priceLabel: 'Alert me when the price drops below', priceLabelPax: 'Alert me when the price per passenger drops below',
-      ilsHint: 'About ₪{a}{b} at a rough rate', perPax: ' per passenger', advPrice: 'Advanced filters: layovers and separate tickets',
-      maxLayover: 'Longest layover (hours)', selfTransfer: 'Allow separate tickets with self-transfer (cheaper, but not protected if a flight is late)',
-      submit: 'Confirm and continue in Telegram', submitEdit: 'Save changes in Telegram', fix: 'Please fix:',
-      privacy: 'Your details go only to the Telegram bot and are stored encrypted. The person who shared the bot with you can see your search (route, dates and price limit). You can stop any time with /stop in the bot.',
-      previewTitle: '🧪 Test mode: this is what the bot would receive', previewNote: 'Nothing was sent to the bot, and the existing sign-up did not change.', code: 'Code:', backToForm: 'Back to the form',
-      almostDone: 'Almost done', openBot: 'Open the bot in Telegram', step1: 'In Telegram, tap <b>Start</b> at the bottom.',
-      step2: 'No Start button? Copy this message and send it to the bot:', copy: 'Copy', copied: 'Copied ✓',
-      step3: 'Within a few minutes the bot confirms and shows your settings.', step4: 'The first search sends results within about 10–20 minutes.', wantChange: 'Want to change something?',
-      opts: {
-        cabins: [['economy', 'Economy'], ['premium', 'Premium economy'], ['business', 'Business'], ['first', 'First']],
-        bags: [['0', 'No checked bag'], ['1', '1 checked bag'], ['2', '2 checked bags']], yesNo: [['1', 'Yes'], ['0', 'Not needed']],
-        flex: [['0', 'Exactly this date'], ['1', '±1 day'], ['3', '±3 days'], ['5', '±5 days']],
-        stops: [['0', 'Nonstop only'], ['1', 'Up to 1 stop'], ['2', 'Up to 2 stops'], ['3', 'Any']],
-        airlines: [['', 'Any airline'], ['LY', 'El Al'], ['6H', 'Israir'], ['IZ', 'Arkia'], ['other', 'Other (code)...']],
-      },
-    },
-  };
+  // Every text of the page is in locales/<language>.js (section "form"); the languages are listed in i18n.js.
+  var T = {};
+  FlightI18n.list().forEach(function (l) { T[l.code] = FlightI18n.get(l.code).form; });
 
   var params = new URLSearchParams(location.search);
   var TEST = params.get('test') === '1';
@@ -326,9 +350,12 @@
   try { if (params.get('p')) EDIT = FlightCodec.decode(params.get('p')); } catch (e) { EDIT = null; }
   var invite = (EDIT && EDIT.invite) || (params.get('i') || '').trim();
   try { if (invite) localStorage.setItem('fw-invite', invite); else invite = localStorage.getItem('fw-invite') || ''; } catch (e) {}
-  var lang = params.get('lang') || (EDIT && EDIT.lang) || (function () { try { return localStorage.getItem('fw-lang'); } catch (e) { return null; } }()) || 'he';
-  if (!T[lang]) lang = 'he';
-  var t = function (k) { return T[lang][k]; };
+  var lang = params.get('lang') || (EDIT && EDIT.lang) || (function () { try { return localStorage.getItem('fw-lang'); } catch (e) { return null; } }())
+    || FlightI18n.resolve(navigator.language);
+  if (!T[lang]) lang = FlightI18n.FALLBACK;
+  // A text missing in this language: the English one.
+  var t = function (k) { var v = T[lang][k]; return v != null ? v : T[FlightI18n.FALLBACK][k]; };
+  var opts = function (k) { return (T[lang].opts || {})[k] || T[FlightI18n.FALLBACK].opts[k]; };
 
   // ---------- select options ----------
   function fill(sel, items, keep) {
@@ -344,22 +371,39 @@
   var DEFAULTS = { cabin: 'economy', checkedBags: '1', carryOn: '1', outFlexibility: '3', retFlexibility: '3', outMaxStops: '0', retMaxStops: '1', airline: '', retAirline: '' };
 
   // ---------- apply language ----------
-  function applyLang(first) {
-    document.documentElement.lang = lang; document.documentElement.dir = lang === 'he' ? 'rtl' : 'ltr';
-    document.title = t('title').replace('✈️ ', '');
-    document.querySelectorAll('[data-t]').forEach(function (el) { var v = t(el.dataset.t); if (v == null) return; if (el.dataset.html) el.innerHTML = v; else el.textContent = v; });
-    document.querySelectorAll('[data-tp]').forEach(function (el) { el.placeholder = t(el.dataset.tp); });
-    document.querySelectorAll('select[data-opts]').forEach(function (s) {
-      fill(s, T[lang].opts[s.dataset.opts], !first);
+  // Texts and select options inside root (the page, or a new flight card of a trip).
+  function localize(root, first) {
+    root.querySelectorAll('[data-t]').forEach(function (el) { var v = t(el.dataset.t); if (v == null) return; if (el.dataset.html) el.innerHTML = v; else el.textContent = v; });
+    root.querySelectorAll('[data-tp]').forEach(function (el) { el.placeholder = t(el.dataset.tp); });
+    root.querySelectorAll('select[data-opts]').forEach(function (s) {
+      fill(s, opts(s.dataset.opts), !first);
       if (first) s.value = DEFAULTS[s.id] != null ? DEFAULTS[s.id] : (s.dataset.default || s.options[0].value);
     });
-    $('langBtn').textContent = lang === 'he' ? 'English' : 'עברית';
+    root.querySelectorAll('.leg').forEach(syncLeg);
+  }
+  function applyLang(first) {
+    document.documentElement.lang = lang; document.documentElement.dir = FlightI18n.get(lang).dir || 'ltr';
+    document.title = t('title').replace('✈️ ', '');
+    localize(document, first);
+    $('langSel').value = lang; fillLocal();
     $('swapBtn').title = t('swap'); $('swapBtn').setAttribute('aria-label', t('swap'));
     $('submitBtn').textContent = EDIT ? t('submitEdit') : t('submit');
+    document.querySelectorAll('.leg-tools').forEach(function (b) { b.querySelector('.leg-up').title = t('up'); b.querySelector('.leg-down').title = t('down'); b.querySelector('.leg-del').title = t('del'); });
     syncPrice(); refreshPlaces();
   }
-  $('langBtn').addEventListener('click', function () {
-    lang = lang === 'he' ? 'en' : 'he';
+  fill($('langSel'), FlightI18n.list().map(function (l) { return [l.code, l.name]; }));
+  // Currency and time zone: "automatic" (from the origin) or one from docs/regions.js. The time zone starts as the browser's.
+  var BROWSER_TZ = (function () { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { return ''; } }());
+  function fillLocal() {
+    fill($('currency'), [['', t('currencyAuto')]].concat(FlightRegions.CURRENCIES.slice(1).map(function (c) { return [c, c]; })), true);
+    fill($('tz'), [['', t('tzAuto')]].concat(FlightRegions.ZONES.slice(1).map(function (z) { return [z, z.replace(/_/g, ' ')]; })), true);
+  }
+  fillLocal();
+  if (FlightRegions.isZone(BROWSER_TZ)) $('tz').value = BROWSER_TZ;
+  $('currency').addEventListener('change', function () { syncPrice(); });
+  document.addEventListener('placechosen', function () { syncPrice(); });
+  $('langSel').addEventListener('change', function () {
+    lang = $('langSel').value;
     try { localStorage.setItem('fw-lang', lang); } catch (e) {}
     applyLang(false);
   });
@@ -389,14 +433,23 @@
   }
 
   function oneWay() { return $('tripOw').checked; }
+  function multi() { return $('tripMulti').checked; }
   function pax() { return Number($('adults').value) + Number($('children').value) + Number($('infants').value); }
-  function syncTrip() { $('retCard').hidden = oneWay(); $('lastNum').textContent = oneWay() ? '3' : '4'; }
+  function syncTrip() {
+    var m = multi();
+    $('singleRoute').hidden = m; $('multiHint').hidden = !m; $('tripBox').hidden = !m; $('outCard').hidden = m;
+    $('singlePrice').hidden = m; $('tripPriceHint').hidden = !m;
+    $('retCard').hidden = oneWay() || m; $('lastNum').textContent = m ? '2' : oneWay() ? '3' : '4';
+    if (m && !document.querySelectorAll('.leg').length) { addLeg(); addLeg(); }
+  }
+  // The currency prices are shown in: the one chosen, or the origin country's.
+  function shownCurrency() { return $('currency').value || FlightRegions.currencyOf(FlightCodec.countryOf($('origin').value)); }
   function syncPrice() {
     $('priceLabel').textContent = pax() > 1 ? t('priceLabelPax') : t('priceLabel');
-    var v = Number($('maxPrice').value);
-    $('ilsHint').textContent = v ? t('ilsHint').replace('{a}', Math.round(v * ILS_PER_USD).toLocaleString('en-US')).replace('{b}', pax() > 1 ? t('perPax') : '') : '';
+    var v = Number($('maxPrice').value); var cur = shownCurrency();
+    $('localHint').textContent = v && cur !== 'USD' && RATES[cur] ? t('localHint').replace('{a}', FlightI18n.money(v * RATES[cur], cur)).replace('{b}', pax() > 1 ? t('perPax') : '') : '';
   }
-  $('tripRt').addEventListener('change', syncTrip); $('tripOw').addEventListener('change', syncTrip);
+  $('tripRt').addEventListener('change', syncTrip); $('tripOw').addEventListener('change', syncTrip); $('tripMulti').addEventListener('change', syncTrip);
   ['adults', 'children', 'infants'].forEach(function (id) { $(id).addEventListener('change', syncPrice); });
   $('maxPrice').addEventListener('input', syncPrice);
   document.querySelectorAll('.airline-select').forEach(function (s) {
@@ -408,7 +461,7 @@
   var PLACES = []; var BY_CODE = {};
   function region(code, l) { try { return new Intl.DisplayNames([l], { type: 'region' }).of(code) || code; } catch (e) { return code; } }
   function norm(s) { return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[׳'"`.,()-]/g, ' ').replace(/\s+/g, ' ').trim(); }
-  function nameOf(r) { return lang === 'en' ? (r[1] || r[2]) : (r[5] || r[1] || r[2]); }
+  function nameOf(r) { var col = FlightI18n.get(lang).placeColumn; return (col && r[col]) || r[1] || r[2]; }
   function labelOf(r) { return nameOf(r) + ' · ' + r[0]; }
   function search(q) {
     var nq = norm(q); if (!nq) return [];
@@ -424,10 +477,10 @@
     out.sort(function (a, b) { return a[0] - b[0]; });
     return out.slice(0, 40).map(function (x) { return x[1]; });
   }
-  var pickers = [].map.call(document.querySelectorAll('.place-q'), function (q) {
-    var hidden = $(q.dataset.target); var list = $(q.dataset.target + 'List'); var items = []; var active = -1;
+  function attachPicker(q, hidden, list) {
+    var items = []; var active = -1;
     function close() { list.hidden = true; q.setAttribute('aria-expanded', 'false'); active = -1; }
-    function choose(r) { hidden.value = r[0]; q.value = labelOf(r); close(); }
+    function choose(r) { hidden.value = r[0]; q.value = labelOf(r); close(); q.dispatchEvent(new Event('placechosen', { bubbles: true })); }
     function render() {
       items = search(q.value); list.innerHTML = '';
       if (!items.length) { close(); return; }
@@ -457,7 +510,8 @@
       } else if (e.key === 'Enter') { e.preventDefault(); choose(items[active >= 0 ? active : 0]); } else if (e.key === 'Escape') close();
     });
     return function () { var r = BY_CODE[hidden.value]; if (r) q.value = labelOf(r); else if (hidden.value) q.value = hidden.value; };
-  });
+  }
+  var pickers = [].map.call(document.querySelectorAll('.place-q'), function (q) { return attachPicker(q, $(q.dataset.target), $(q.dataset.target + 'List')); });
   function refreshPlaces() { pickers.forEach(function (f) { f(); }); }
   // Swap origin and destination (the chosen airports, or whatever was typed), keeping everything else.
   $('swapBtn').addEventListener('click', function () {
@@ -467,8 +521,110 @@
   });
   fetch('airports.json').then(function (r) { return r.json(); }).then(function (rows) {
     rows.forEach(function (r) { r._he = norm(r[5]); r._city = norm(r[1]); r._name = norm(r[2]); r._ctry = norm(region(r[3], 'he')); r._ctryEn = norm(region(r[3], 'en')); BY_CODE[r[0]] = r; });
-    PLACES = rows; FlightCodec.setPlaces(rows); refreshPlaces();
+    PLACES = rows; FlightCodec.setPlaces(rows); refreshPlaces(); syncPrice();
   }).catch(function () {});
+  fetch('https://open.er-api.com/v6/latest/USD').then(function (r) { return r.json(); }).then(function (j) { if (j && j.rates) { RATES = j.rates; syncPrice(); } }).catch(function () {});
+
+  // ---------- trip: flight cards ----------
+  var MAX_LEGS = FlightCodec.MAX_LEGS;
+  var q1 = function (el, c) { return el.querySelector('.' + c); };
+  function legs() { return [].slice.call(document.querySelectorAll('.leg')); }
+  function legPax(el) { return Number(q1(el, 'leg-adults').value) + Number(q1(el, 'leg-children').value) + Number(q1(el, 'leg-infants').value); }
+  function syncLeg(el) {
+    var i = legs().indexOf(el); var first = i <= 0;
+    q1(el, 'leg-no').textContent = String(i + 1); q1(el, 'leg-no-text').textContent = '';
+    q1(el, 'leg-same-box').hidden = first;
+    q1(el, 'leg-pax').hidden = !first && q1(el, 'leg-same').checked;
+    var flex = q1(el, 'leg-flex').checked; q1(el, 'leg-flex-box').hidden = !flex; q1(el, 'leg-range-box').hidden = flex;
+    var pax = first || !q1(el, 'leg-same').checked ? legPax(el) : (function () { var k = i; while (k > 0 && q1(legs()[k], 'leg-same').checked) k--; return legPax(legs()[k]); }());
+    q1(el, 'leg-price-label').textContent = pax > 1 ? t('legPricePax') : t('legPrice');
+    q1(el, 'leg-up').disabled = first; q1(el, 'leg-down').disabled = i === legs().length - 1; q1(el, 'leg-del').disabled = legs().length <= FlightCodec.MIN_LEGS;
+    q1(el, 'leg-airline-other').parentNode.hidden = q1(el, 'leg-airline').value !== 'other';
+  }
+  function syncLegs() { legs().forEach(syncLeg); $('addLeg').disabled = legs().length >= MAX_LEGS; $('addLeg').title = t('maxLegs').replace('{a}', MAX_LEGS); }
+  var legUid = 0;
+  function addLeg(data) {
+    var el = $('legTpl').content.firstElementChild.cloneNode(true); var uid = 'leg' + (++legUid);
+    // radio groups and label targets need ids unique to this card
+    var fl = q1(el, 'leg-flex'); var rg = q1(el, 'leg-range'); fl.name = rg.name = uid + 'mode';
+    fl.id = uid + 'f'; rg.id = uid + 'r'; fl.nextElementSibling.htmlFor = fl.id; rg.nextElementSibling.htmlFor = rg.id;
+    fill(q1(el, 'leg-adults'), nums(1, 9)); fill(q1(el, 'leg-children'), nums(0, 8)); fill(q1(el, 'leg-infants'), nums(0, 4));
+    fill(q1(el, 'leg-dep-from'), hours.slice(0, 24)); q1(el, 'leg-dep-from').value = '0';
+    fill(q1(el, 'leg-dep-to'), hours.slice(1)); q1(el, 'leg-dep-to').value = '24';
+    ['leg-date', 'leg-from', 'leg-to'].forEach(function (c) { q1(el, c).min = todayIso; });
+    $('legs').appendChild(el);
+    localize(el, true);
+    var places = el.querySelectorAll('.place');
+    [].forEach.call(places, function (pl) { pickers.push(attachPicker(pl.querySelector('.leg-q'), pl.querySelector('input[type=hidden]'), pl.querySelector('.place-list'))); });
+    var prev = legs()[legs().indexOf(el) - 1];
+    if (prev && !data) { q1(el, 'leg-origin').value = q1(prev, 'leg-destination').value; } // starts where the last flight lands
+    if (data) loadLeg(el, data, !!prev);
+    // events
+    el.addEventListener('change', function () { syncLegs(); });
+    // A destination chosen: the next flight starts there, unless it already has an origin.
+    el.addEventListener('placechosen', function (e) {
+      var next = el.nextElementSibling;
+      if (e.target.dataset.k === 'destination' && next && !q1(next, 'leg-origin').value) { q1(next, 'leg-origin').value = q1(el, 'leg-destination').value; refreshPlaces(); }
+    });
+    el.addEventListener('input', function (e) { if (e.target.classList.contains('leg-airline-other')) e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); });
+    q1(el, 'leg-from').addEventListener('change', function () { if (!q1(el, 'leg-to').value || q1(el, 'leg-to').value < q1(el, 'leg-from').value) q1(el, 'leg-to').value = q1(el, 'leg-from').value; });
+    q1(el, 'leg-swap').addEventListener('click', function () {
+      var o = q1(el, 'leg-origin'); var d = q1(el, 'leg-destination'); var qs = el.querySelectorAll('.leg-q');
+      var a = o.value; o.value = d.value; d.value = a; var b = qs[0].value; qs[0].value = qs[1].value; qs[1].value = b; refreshPlaces();
+    });
+    q1(el, 'leg-up').addEventListener('click', function () { var p = el.previousElementSibling; if (p) $('legs').insertBefore(el, p); syncLegs(); });
+    q1(el, 'leg-down').addEventListener('click', function () { var n = el.nextElementSibling; if (n) $('legs').insertBefore(n, el); syncLegs(); });
+    q1(el, 'leg-del').addEventListener('click', function () { if (legs().length > FlightCodec.MIN_LEGS) { el.remove(); syncLegs(); } });
+    applyLangTools(el);
+    syncLegs(); refreshPlaces();
+    return el;
+  }
+  function applyLangTools(el) { q1(el, 'leg-up').title = t('up'); q1(el, 'leg-down').title = t('down'); q1(el, 'leg-del').title = t('del'); }
+  $('addLeg').addEventListener('click', function () { if (legs().length < MAX_LEGS) { var el = addLeg(); el.querySelectorAll('.leg-q')[1].focus(); } });
+  function setLegDates(el, from, to) {
+    var days = daysBetween(from, to);
+    if (days === 0 || (days % 2 === 0 && [2, 6, 10].indexOf(days) >= 0)) {
+      q1(el, 'leg-flex').checked = true; q1(el, 'leg-date').value = addDays(from, days / 2); q1(el, 'leg-flexibility').value = String(days / 2);
+    } else { q1(el, 'leg-range').checked = true; q1(el, 'leg-from').value = from; q1(el, 'leg-to').value = to; }
+  }
+  function loadLeg(el, l, hasPrev) {
+    q1(el, 'leg-origin').value = l.origin; q1(el, 'leg-destination').value = l.destination;
+    var prev = hasPrev ? legs()[legs().indexOf(el) - 1] : null;
+    var same = prev && legPax(prev) === l.adults + l.children + l.infants && q1(prev, 'leg-adults').value === String(l.adults) && q1(prev, 'leg-children').value === String(l.children);
+    q1(el, 'leg-same').checked = !!same;
+    q1(el, 'leg-adults').value = String(l.adults); q1(el, 'leg-children').value = String(l.children); q1(el, 'leg-infants').value = String(l.infants);
+    setLegDates(el, l.outFrom, l.outTo);
+    q1(el, 'leg-stops').value = String(l.outMaxStops); q1(el, 'leg-price').value = String(l.maxPrice);
+    var known = [].some.call(q1(el, 'leg-airline').options, function (o) { return o.value === (l.airline || ''); });
+    q1(el, 'leg-airline').value = known ? (l.airline || '') : 'other'; q1(el, 'leg-airline-other').value = known ? '' : l.airline;
+    q1(el, 'leg-hours').value = String(l.outMaxHours || 0); q1(el, 'leg-dep-from').value = String(l.outDepFrom || 0); q1(el, 'leg-dep-to').value = String(l.outDepTo || 24);
+    if (l.airline || l.outMaxHours || l.outDepFrom || (l.outDepTo && l.outDepTo !== 24)) el.querySelector('details').open = true;
+  }
+  function legDates(el) {
+    if (q1(el, 'leg-range').checked) return [q1(el, 'leg-from').value, q1(el, 'leg-to').value];
+    var d = q1(el, 'leg-date').value; if (!d) return ['', ''];
+    var f = Number(q1(el, 'leg-flexibility').value); var from = addDays(d, -f);
+    if (from < todayIso) from = todayIso;
+    return [from, addDays(d, f)];
+  }
+  function readLegs() {
+    var out = [];
+    legs().forEach(function (el, i) {
+      var src = el; var k = i;
+      while (k > 0 && q1(legs()[k], 'leg-same').checked) k--; // "same passengers": the nearest flight that sets them
+      src = legs()[k];
+      var qv = function (c) { return el.querySelectorAll('.leg-q')[c].value; };
+      var dates = legDates(el); var al = q1(el, 'leg-airline').value;
+      out.push({
+        origin: (q1(el, 'leg-origin').value || qv(0)).trim().toUpperCase(), destination: (q1(el, 'leg-destination').value || qv(1)).trim().toUpperCase(),
+        adults: Number(q1(src, 'leg-adults').value), children: Number(q1(src, 'leg-children').value), infants: Number(q1(src, 'leg-infants').value),
+        outFrom: dates[0], outTo: dates[1], airline: al === 'other' ? q1(el, 'leg-airline-other').value.trim().toUpperCase() : al,
+        outMaxStops: Number(q1(el, 'leg-stops').value), outMaxHours: Number(q1(el, 'leg-hours').value || 0),
+        outDepFrom: Number(q1(el, 'leg-dep-from').value), outDepTo: Number(q1(el, 'leg-dep-to').value), maxPrice: Number(q1(el, 'leg-price').value || 0),
+      });
+    });
+    return out;
+  }
 
   // ---------- fill the form from current settings (editing) ----------
   function setDates(k, from, to) {
@@ -484,6 +640,15 @@
     $(otherId).parentNode.hidden = $(selId).value !== 'other';
   }
   function load(p0) {
+    $('currency').value = p0.currency || ''; $('tz').value = p0.tz || '';
+    if (FlightCodec.isTrip(p0)) {
+      $('tripMulti').checked = true;
+      ['checkedBags', 'carryOn', 'maxLayover'].forEach(function (id) { if (p0[id] != null) $(id).value = String(p0[id]); });
+      if (p0.cabin) $('cabin').value = p0.cabin; $('selfTransfer').checked = !!p0.selfTransfer;
+      p0.legs.forEach(function (l, i) { addLeg(FlightCodec.legPrefs(p0, i)); });
+      if (p0.maxLayover || p0.selfTransfer) $('maxLayover').closest('details').open = true;
+      return;
+    }
     var p = FlightCodec.withDefaults(p0);
     $('origin').value = p.origin; $('destination').value = p.destination;
     (p.oneWay ? $('tripOw') : $('tripRt')).checked = true;
@@ -509,9 +674,13 @@
   function airlineOf(selId, otherId) { var v = $(selId).value; return v === 'other' ? $(otherId).value.trim().toUpperCase() : v; }
   function n(id) { return Number($(id).value || 0); }
   function read() {
+    if (multi()) {
+      return { trip: true, invite: invite, lang: lang, currency: $('currency').value, tz: $('tz').value, cabin: $('cabin').value, checkedBags: n('checkedBags'), carryOn: n('carryOn'),
+        maxLayover: n('maxLayover'), selfTransfer: $('selfTransfer').checked, legs: readLegs() };
+    }
     var od = datesOf('out');
     var p = {
-      invite: invite, lang: lang,
+      invite: invite, lang: lang, currency: $('currency').value, tz: $('tz').value,
       origin: ($('origin').value || $('originQ').value).trim().toUpperCase(), destination: ($('destination').value || $('destinationQ').value).trim().toUpperCase(),
       adults: n('adults'), children: n('children'), infants: n('infants'), cabin: $('cabin').value,
       checkedBags: n('checkedBags'), carryOn: n('carryOn'),
@@ -543,8 +712,10 @@
       $('previewCode').textContent = code;
       $('form').hidden = true; $('preview').hidden = false; window.scrollTo(0, 0); return;
     }
-    $('tgLink').href = 'https://t.me/' + BOT + '?start=' + code;
+    var long = code.length > FlightCodec.TG_MAX; // a long trip does not fit in a Telegram link: it is pasted to the bot
+    $('tgLink').href = 'https://t.me/' + BOT + (long ? '' : '?start=' + code);
     $('startMsg').textContent = '/start ' + code;
+    $('longCode').hidden = !long; $('step1').hidden = long;
     $('form').hidden = true; $('done').style.display = 'block'; window.scrollTo(0, 0);
   });
   $('copyBtn').addEventListener('click', function () {

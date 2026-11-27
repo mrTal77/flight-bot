@@ -1,6 +1,9 @@
 {
   "botUsername": "Ffffffflightticketbot",
   "maxUsers": 10,
+  "pausedUsers": [
+    "uab7fee9cec"
+  ],
   "invites": [
     {
       "label": "default",
@@ -9,26 +12,67 @@
   ],
   "realertDropUsd": 10,
   "realertHours": 12,
-  "markets": [
-    {
+  "summaryHour": 21,
+  "kayakSites": {
+    "il": {
       "host": "www.he.kayak.com",
       "currency": "ILS",
       "linkHost": "il.kayak.com",
-      "label": "Kayak ישראל",
+      "country": "IL",
       "bagFilter": true
     },
-    {
+    "au": {
       "host": "www.kayak.com.au",
       "currency": "AUD",
-      "label": "Kayak אוסטרליה"
+      "country": "AU"
+    },
+    "us": {
+      "host": "www.kayak.com",
+      "currency": "USD",
+      "country": "US",
+      "locale": "en-US",
+      "monthFirst": true
+    },
+    "uk": {
+      "host": "www.kayak.co.uk",
+      "currency": "GBP",
+      "country": "GB"
     }
-  ],
+  },
+  "kayakByCountry": {
+    "IL": [
+      "il",
+      "au"
+    ],
+    "US": [
+      "us"
+    ],
+    "PR": [
+      "us"
+    ],
+    "AU": [
+      "au"
+    ],
+    "NZ": [
+      "au"
+    ],
+    "GB": [
+      "uk"
+    ],
+    "IE": [
+      "uk"
+    ],
+    "default": [
+      "uk",
+      "au"
+    ]
+  },
   "kiwi": true,
   "googleDaily": true,
+  "googleByOrigin": true,
   "googleMarkets": [
     {
-      "gl": "IL",
-      "label": "Google Flights ישראל"
+      "gl": "US"
     }
   ],
   "duffelEveryHours": 8,

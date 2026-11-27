@@ -7,6 +7,8 @@
 //   "rt"    one round-trip ticket (Kayak, Kiwi)
 //   "mixed" two separate one-way tickets (outbound + cheapest valid return)
 //   "ow"    one-way trips (when the user asked for one-way)
+// A trip ("מסע", several one-way flights) searches each flight on its own, one after the other, with that flight's
+// passengers, filters and price limit; it has its own price threshold and alert per flight and a short summary.
 // Usage:
 //   node watch.js --user <id> [--summary] [--dry]    search for a registered user
 //   node watch.js --profile file.json [--summary] --dry   local test with a plain profile file
@@ -28,6 +30,9 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 const BASE = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
 // Default profile for unit tests (require('./watch.js')).
 const codec = require('./docs/codec.js');
+const I18n = require('./docs/i18n.js');
+const Regions = require('./docs/regions.js');
+codec.setPlaces(JSON.parse(fs.readFileSync(path.join(__dirname, 'docs', 'airports.json'), 'utf8')));
 const TEST_PREFS = { origin: 'AAA', destination: 'BBB', airline: 'LY', outMaxStops: 0, outFrom: '2030-12-16', outTo: '2030-12-30',
   oneWay: false, retFrom: '2031-01-10', retTo: '2031-01-25', retMaxStops: 1, retMaxHours: 25, maxTripDays: 31, maxPrice: 950, checkedBags: 1, carryOn: 1 };
 
@@ -38,17 +43,31 @@ let USER;
 if (USER_ID) {
   USER = store.loadUsers().users[USER_ID];
   if (!USER) { console.error('unknown user id'); process.exit(require.main === module ? 1 : 0); }
+  if ((BASE.pausedUsers || []).includes(USER_ID) && require.main === module) { console.log('user is paused (config.json pausedUsers): nothing to do'); process.exit(0); }
 } else if (PROFILE_FILE) {
   USER = JSON.parse(fs.readFileSync(PROFILE_FILE, 'utf8'));
 } else {
   USER = { id: 'test', prefs: TEST_PREFS, owner: false };
 }
+// Kayak sites and Google Flights' country (gl) by the origin's country (config.json "kayakSites", "kayakByCountry",
+// "googleByOrigin"). Kayak's result pages are read as text, so only sites in English or Hebrew with the day written
+// first are used (checked for Israel and Australia; the UK site has the same layout as the Australian one).
+function marketsFor(country) {
+  const by = BASE.kayakByCountry || {}; const sites = BASE.kayakSites || {};
+  return (by[country] || by.default || []).map((k) => ({ key: k, ...sites[k] })).filter((m) => m.host);
+}
+function googleMarketsFor(country) {
+  if (BASE.googleByOrigin !== false && /^[A-Z]{2}$/.test(country || '')) return [{ gl: country }];
+  return BASE.googleMarkets || [{ gl: 'US' }];
+}
 function configFor(p0) {
   const p = codec.withDefaults(p0);
+  const country = codec.countryOf(p.origin);
   const leg = (k, from, to) => ({ from, to, airline: p[k === 'out' ? 'airline' : 'retAirline'] || '', maxStops: p[k + 'MaxStops'],
     maxHours: p[k + 'MaxHours'] || 0, depFrom: p[k + 'DepFrom'], depTo: p[k + 'DepTo'] });
   return {
     ...BASE,
+    markets: marketsFor(country), googleMarkets: googleMarketsFor(country),
     origin: p.origin, destination: p.destination,
     pax: { adults: p.adults, children: p.children, infants: p.infants }, cabin: p.cabin,
     checkedBags: p.checkedBags, carryOn: p.carryOn, maxLayover: p.maxLayover, selfTransfer: !!p.selfTransfer,
@@ -57,10 +76,26 @@ function configFor(p0) {
     maxTripDays: p.oneWay ? 0 : p.maxTripDays, maxPriceUsd: p.maxPrice, // price limit is per passenger
   };
 }
-const CONFIG = configFor(USER.prefs);
-if (process.env.MAX_PRICE_USD) CONFIG.maxPriceUsd = Number(process.env.MAX_PRICE_USD); // for testing the alert
-const OUT = CONFIG.outbound;
-const RET = CONFIG.return; // null for one-way
+// The profile being searched. For a trip it is switched to each flight in turn (useProfile), so everything
+// below that reads CONFIG / OUT / RET / PAX works on that one flight.
+const TRIP = codec.isTrip(USER.prefs);
+let CONFIG; let OUT; let RET; let PAX; let BAG_PAX; let SIMPLE_PAX;
+let LEG_TAG = ''; // "leg1", "leg2"... in the search log while a trip's flight is searched
+function useProfile(prefs, legTag) {
+  CONFIG = configFor(prefs);
+  if (process.env.MAX_PRICE_USD) CONFIG.maxPriceUsd = Number(process.env.MAX_PRICE_USD); // for testing the alert
+  OUT = CONFIG.outbound;
+  RET = CONFIG.return; // null for one-way
+  PAX = CONFIG.pax.adults + CONFIG.pax.children + CONFIG.pax.infants;
+  BAG_PAX = CONFIG.pax.adults + CONFIG.pax.children; // infants get no bag allowance
+  SIMPLE_PAX = PAX === 1 && CONFIG.cabin === 'economy'; // sources that only handle 1 adult in economy
+  LEG_TAG = legTag || '';
+}
+// The user's language, currency and time zone (docs/locales, docs/regions.js); currency and zone default to the origin.
+const LANG = USER.prefs.lang || 'he';
+const LOCAL = codec.localOf(USER.prefs);
+const T = (key, ...a) => I18n.t(LANG, 'search.' + key, ...a);
+useProfile(TRIP ? codec.legPrefs(USER.prefs, 0) : USER.prefs);
 const OWNER = !!USER.owner; // the bot owner also gets Duffel (El Al nonstop fares; needs DUFFEL_TOKEN)
 // Per-user extras from config.json "userExtras" (keyed by the random user id; no personal data):
 //   preferAirlines: airline codes this user prefers. Their nonstop flights get their own searches and are
@@ -71,9 +106,6 @@ const PREFER = (EXTRA.preferAirlines || []).map((x) => String(x).toUpperCase());
 const AIRLINE_NAME_RE = { Y4: /volaris/i, AM: /aero ?m[eé]xico/i, VB: /viva ?aerobus/i, LY: /el ?al|אל על/i, IZ: /arkia|ארקיע/i, '6H': /israir|ישראייר/i };
 const flies = (leg, code) => !!leg && ((leg.carriers && leg.carriers.length && leg.carriers.every((c) => c === code))
   || (!(leg.carriers && leg.carriers.length) && !!AIRLINE_NAME_RE[code] && AIRLINE_NAME_RE[code].test(leg.airline || '') && !/[+,]/.test(leg.airline || '')));
-const PAX = CONFIG.pax.adults + CONFIG.pax.children + CONFIG.pax.infants;
-const BAG_PAX = CONFIG.pax.adults + CONFIG.pax.children; // infants get no bag allowance
-const SIMPLE_PAX = PAX === 1 && CONFIG.cabin === 'economy'; // sources that only handle 1 adult in economy
 
 const PRICE_RE = {
   ILS: /₪\s?([\d,]+)/,
@@ -84,20 +116,15 @@ const PRICE_RE = {
 };
 const DATE_LINE_RE = /^(\d{1,2})[./](\d{1,2})\.?$/; // 16.12 / 20.12. / 20/12 (day first)
 const CARD_SPLIT_RE = /המשך לפרטי התוצאה|Go to result details|Zu den Ergebnisdetails/;
-const DAYS_HE = ['א׳', 'ב׳', 'ג׳', 'ד׳', 'ה׳', 'ו׳', 'שבת'];
-const AIRLINE_HE = { LY: 'אל על', IZ: 'ארקיע', '6H': 'ישראייר' };
-const CITY_HE = { TLV: 'תל אביב', MIA: 'מיאמי', JFK: 'ניו יורק', EWR: 'ניו יורק', LAX: 'לוס אנג׳לס', LHR: 'לונדון', CDG: 'פריז',
-  BKK: 'בנגקוק', FCO: 'רומא', ATH: 'אתונה', BCN: 'ברצלונה', MAD: 'מדריד', BER: 'ברלין', AMS: 'אמסטרדם', DXB: 'דובאי', BUD: 'בודפשט',
-  PRG: 'פראג', VIE: 'וינה', LCA: 'לרנקה', IST: 'איסטנבול', SFO: 'סן פרנסיסקו', ORD: 'שיקגו', YYZ: 'טורונטו', NRT: 'טוקיו', HND: 'טוקיו' };
-codec.setPlaces(JSON.parse(fs.readFileSync(path.join(__dirname, 'docs', 'airports.json'), 'utf8')));
-const cityHe = (c) => CITY_HE[c] || codec.placeName(c);
-const outAirlineHe = () => (OUT.airline ? AIRLINE_HE[OUT.airline] || OUT.airline : '');
-function heAirline(name) {
+// Airline names the sources write in several ways, shown with the name in the user's language (locale "airlines").
+const AIRLINE_CODE_RE = { LY: /^el ?al\b|אל על/i, '6H': /^israir|ישראייר/i, IZ: /^arkia|ארקיע/i };
+const cityName = (c) => codec.placeName(c, LANG);
+const outAirlineName = () => (OUT.airline ? codec.airlineName(OUT.airline, LANG) : '');
+function airlineLabel(name) {
   if (!name) return '';
-  if (AIRLINE_HE[name]) return AIRLINE_HE[name];
-  if (/^el ?al/i.test(name) || /אל על/.test(name)) return 'אל על';
-  if (/^israir/i.test(name)) return 'ישראייר';
-  if (/^arkia/i.test(name)) return 'ארקיע';
+  const own = I18n.get(LANG).airlines || {};
+  if (own[name]) return own[name];
+  for (const [code, re] of Object.entries(AIRLINE_CODE_RE)) if (re.test(name)) return codec.airlineName(code, LANG);
   return name.replace(/\s+(Airlines?|Airways|Israel Airlines)$/i, '');
 }
 
@@ -107,13 +134,15 @@ function saveState(s) { if (USER_ID && !DRY) store.saveState(USER_ID, s); }
 function isoDate(d) { return d.toISOString().slice(0, 10); }
 function addDays(iso, n) { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return isoDate(d); }
 function dateRange(from, to) { const a = []; for (let d = from; d <= to; d = addDays(d, 1)) a.push(d); return a; }
-function heDate(iso) { const d = new Date(iso + 'T00:00:00Z'); return `${DAYS_HE[d.getUTCDay()]} ${d.getUTCDate()}.${d.getUTCMonth() + 1}`; }
+const dayDate = (iso) => I18n.dayDate(LANG, iso); // "ב׳ 20.12", "Sun 20 Dec"
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 function fmtUsd(n) { return '$' + Math.round(n).toLocaleString('en-US'); }
-let ILS_PER_USD = null; // today's rate, set in main()
-function fmtIls(usd) { return ILS_PER_USD ? '₪' + Math.round(usd * ILS_PER_USD).toLocaleString('en-US') : ''; }
-// "$1,000 (₪3,200)" for messages
-function fmtBoth(usd) { const ils = fmtIls(usd); return ils ? `${fmtUsd(usd)} (${ils})` : fmtUsd(usd); }
+let LOCAL_RATE = null; // today's rate of the user's currency (units per US dollar), set in main()
+function fmtLocalCur(usd) { return LOCAL_RATE && LOCAL.currency !== 'USD' ? I18n.money(usd * LOCAL_RATE, LOCAL.currency) : ''; }
+// "$1,000 (€920)" for messages; "$1,000" for a user whose currency is the US dollar
+function fmtBoth(usd) { const loc = fmtLocalCur(usd); return loc ? `${fmtUsd(usd)} (${loc})` : fmtUsd(usd); }
+// "₪3.20", "€0.92": one US dollar in the user's currency
+function rateText() { return I18n.money(0, LOCAL.currency).replace(/0$/, '') + LOCAL_RATE.toFixed(2); }
 function fmtLocal(o) {
   const sym = { ILS: '₪', EUR: '€', GBP: '£', USD: '$', AUD: 'AUD ' }[o.currency] || o.currency + ' ';
   return `${sym}${Math.round(o.price).toLocaleString('en-US')}`;
@@ -141,7 +170,7 @@ async function retryOnce(fn, waitMs = 8000) {
 const SEARCH_LOG = [];
 const scrub = (msg) => String(msg || '').split('\n')[0].replace(/https?:\/\/\S+/g, '<link>').replace(/\d{4}-\d{2}-\d{2}/g, '<date>').replace(/[",;\r]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
 function logSearch(source, market, kind, status, attempts, sec, results, error) {
-  SEARCH_LOG.push({ source, market, kind, status, attempts, sec, results, error: scrub(error) });
+  SEARCH_LOG.push({ source, market, kind: LEG_TAG && source !== 'telegram' ? LEG_TAG : kind, status, attempts, sec, results, error: scrub(error) });
 }
 const blockedError = (why) => Object.assign(new Error(`blocked: ${why}`), { blocked: true });
 // Runs one search and records the outcome. A failure is tried once more after a pause; a block is not
@@ -160,6 +189,7 @@ async function tracked(source, market, kind, fn, waitMs = 8000, count = (r) => (
   }
 }
 const { appendCsv, logMessages } = require('./lib/logs');
+const { trackLinks } = require('./lib/clicks');
 const MESSAGES = []; // messages sent in this run, for logs/messages.csv
 // Written at the end of every real run (not dry runs), and also when a run crashes.
 function writeLogs(outcome, offersCount, startedMs) {
@@ -262,7 +292,8 @@ function parseStops(l) {
   return m ? Number(m[1]) : undefined;
 }
 // Each Kayak result card: one or two legs (date, times, stops, duration), airline, bag icons, price.
-function parseKayakCards(text, currency) {
+// monthFirst: the US site writes dates month first (12/16).
+function parseKayakCards(text, currency, monthFirst) {
   const re = PRICE_RE[currency];
   const offers = [];
   for (const chunk of text.split(CARD_SPLIT_RE).slice(1)) {
@@ -271,7 +302,7 @@ function parseKayakCards(text, currency) {
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i];
       const dm = l.match(DATE_LINE_RE);
-      if (dm && price == null) { leg = { date: yearFor(Number(dm[2]), Number(dm[1])), time: '', stops: undefined, hours: null }; legs.push(leg); continue; }
+      if (dm && price == null) { leg = { date: monthFirst ? yearFor(Number(dm[1]), Number(dm[2])) : yearFor(Number(dm[2]), Number(dm[1])), time: '', stops: undefined, hours: null }; legs.push(leg); continue; }
       if (!leg) continue;
       if (price == null && /\d{1,2}:\d{2}\s?[–-]\s?\d{1,2}:\d{2}/.test(l) && !leg.time) { leg.time = l.replace(/\s+/g, ' '); continue; }
       const st = parseStops(l); if (st !== undefined && leg.stops === undefined) { leg.stops = st; continue; }
@@ -291,7 +322,7 @@ function parseKayakCards(text, currency) {
 // earlier search), and every GitHub Actions run starts on a fresh machine with a new browser.
 async function kayakSearch(browser, market, task) {
   const ctx = await browser.newContext({
-    locale: market.host.includes('.he.') ? 'he-IL' : market.host.endsWith('.au') ? 'en-AU' : 'en-GB',
+    locale: market.locale || (market.host.includes('.he.') ? 'he-IL' : market.host.endsWith('.au') ? 'en-AU' : 'en-GB'),
     userAgent: UA, viewport: { width: 1366, height: 1000 },
   });
   try {
@@ -309,15 +340,15 @@ async function kayakSearch(browser, market, task) {
       const text = await page.evaluate(() => (document.body ? document.body.innerText : ''));
       if (isCheck()) throw blockedError('Kayak security check');
       if (/robot|captcha|human side|unusual traffic|תעבורה חריגה|Security Check/i.test(text.slice(0, 2000))) throw blockedError('bot check');
-      cards = parseKayakCards(text, market.currency);
+      cards = parseKayakCards(text, market.currency, !!market.monthFirst);
       if (cards.length && !/\d+\s?%/.test(text.slice(0, 4000)) && k >= 2) break;
     }
     if (!cards.length) throw new Error('no results parsed');
     const linkHost = market.linkHost || market.host;
     return cards.map((c) => ({
-      kind: task.kind, legs: c.legs.map((l) => ({ ...l, airline: heAirline(c.airline) || (task.kind === 'ret' ? '' : heAirline(OUT.airline)) })), price: c.price, currency: market.currency, bags: c.bags,
-      source: (task.labelPrefix || '') + (market.label || market.host), algo: task.algo, method: task.method,
-      airlines: task.kind === 'ret' ? [c.airline] : [outAirlineHe() || c.airline],
+      kind: task.kind, legs: c.legs.map((l) => ({ ...l, airline: airlineLabel(c.airline) || (task.kind === 'ret' ? '' : airlineLabel(OUT.airline)) })), price: c.price, currency: market.currency, bags: c.bags,
+      source: (task.labelPrefix || '') + kayakLabel(market), algo: task.algo, method: task.method,
+      airlines: task.kind === 'ret' ? [c.airline] : [outAirlineName() || c.airline],
       url: kayakUrl(linkHost, task.kind, c.legs[0].date, task.kind === 'rt' && c.legs[1] ? c.legs[1].date : null, fsWithBag),
       bagChecked: bagFs ? true : null, // with the bag filter Kayak prices include the checked bags
     }));
@@ -368,7 +399,7 @@ function kiwiLeg(l) {
     time: `${l.departureTime.slice(11, 16)} – ${l.arrivalTime.slice(11, 16)}${l.arrivalTime.slice(0, 10) > l.departureTime.slice(0, 10) ? '+1' : ''}`,
     stops: l.stops, hours: l.durationSeconds / 3600, carriers: [...new Set(l.segments.map((s) => s.carrier))],
     names: [...new Set(l.segments.map((s) => s.carrierName || s.carrier))],
-    airline: [...new Set(l.segments.map((s) => heAirline(s.carrierName || s.carrier)))].join(' + '),
+    airline: [...new Set(l.segments.map((s) => airlineLabel(s.carrierName || s.carrier)))].join(' + '),
   };
 }
 // Departure-hour window of the user's outbound airline on this route, from the one-way results
@@ -401,7 +432,7 @@ function kiwiPush(results, sc, kind, extra) {
     results.push({
       kind, legs, price: it.price / PAX, currency: sc.currency || 'USD', source: 'kiwi.com', url: it.bookingUrl, // price per passenger
       bags: it.baggage ? [it.baggage.cabinBag / BAG_PAX, it.baggage.checkedBag / BAG_PAX] : [],
-      airlines: kind === 'ret' ? legs[0].names : [outAirlineHe() || legs[0].airline], ...(extra || {}),
+      airlines: kind === 'ret' ? legs[0].names : [outAirlineName() || legs[0].airline], ...(extra || {}),
     });
   }
 }
@@ -497,7 +528,7 @@ function parseGoogleLabel(label, date) {
   return {
     price: Number(pm[1].replace(/,/g, '')), rt: !!pm[2],
     leg: { date, time, stops: st ? (st[1] === 'Nonstop' ? 0 : Number(st[2])) : undefined, hours: dur ? Number(dur[1]) + Number(dur[2] || 0) / 60 : null,
-      ...(lays.length ? { layover: Math.max(...lays) } : {}), airline: [...new Set(names.map(heAirline))].join(' + ') },
+      ...(lays.length ? { layover: Math.max(...lays) } : {}), airline: [...new Set(names.map(airlineLabel))].join(' + ') },
   };
 }
 // Which searches today: one-way legs on dates spread over the range, or outbound/return date pairs for round trips.
@@ -515,6 +546,7 @@ async function googleSearch(browser, gm, task) {
   try {
     const page = await ctx.newPage();
     const url = googleUrl(task, gm.gl);
+    const userUrl = url.replace('&curr=USD&hl=en', `&curr=${LOCAL.currency}&hl=${LANG}`); // the link in the message: the user's language and currency
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForFunction(() => /US dollars/.test([...document.querySelectorAll('[aria-label]')].map((e) => e.getAttribute('aria-label')).join(' '))
       || /unusual traffic|No results|no flights/i.test(document.body.innerText), null, { timeout: 20000 }).catch(() => {});
@@ -530,20 +562,24 @@ async function googleSearch(browser, gm, task) {
     const n = forN ? Number(forN[1]) : 1;
     return labels.slice(0, 20).map((l) => parseGoogleLabel(l, task.a)).filter(Boolean).map((g) => {
       const legs = task.kind === 'rt'
-        ? [g.leg, { date: task.b, time: '', stops: undefined, hours: null, airline: 'פרטים בקישור' }] // Google lists the outbound with the round-trip total
+        ? [g.leg, { date: task.b, time: '', stops: undefined, hours: null, airline: T('detailsInLink') }] // Google lists the outbound with the round-trip total
         : [g.leg];
-      return { kind: task.kind, legs, price: g.price / n, currency: 'USD', source: gm.label, bags: [], airlines: [g.leg.airline], url };
+      return { kind: task.kind, legs, price: g.price / n, currency: 'USD', source: gm.label || googleLabel(gm), bags: [], airlines: [g.leg.airline], url: userUrl };
     });
   } finally { await ctx.close(); }
 }
+const googleLabel = (gm) => `Google Flights ${I18n.regionName(LANG, gm.gl)}`;
+const kayakLabel = (m) => m.label || `Kayak ${I18n.regionName(LANG, m.country)}`;
+const GOOGLE_BLOCKED = new Set(); // a Google market that blocked us is not tried again in this run (a trip's later flights)
 async function searchGoogle(browser, gm, tasks) {
   const results = []; const errors = [];
   let failedInARow = 0;
+  if (GOOGLE_BLOCKED.has(gm.gl)) { tasks.forEach((t) => logSearch('google', `google ${gm.gl}`, t.kind, 'skipped', 0, 0, 0, 'site blocked earlier in this run')); return { results, errors }; }
   for (const t of tasks) {
-    if (failedInARow >= 2) { errors.push(`${gm.label}: stopped after 2 failed searches in a row`); break; }
+    if (failedInARow >= 2) { errors.push(`${googleLabel(gm)}: stopped after 2 failed searches in a row`); break; }
     try { results.push(...await tracked('google', `google ${gm.gl}`, t.kind, () => googleSearch(browser, gm, t), 10000)); failedInARow = 0; } catch (e) {
-      if (e.blocked) { errors.push(`${gm.label}: blocked`); break; }
-      failedInARow++; errors.push(`${gm.label} ${t.kind} ${t.a}: ${e.message.split('\n')[0].slice(0, 120)}`);
+      if (e.blocked) { GOOGLE_BLOCKED.add(gm.gl); errors.push(`${googleLabel(gm)}: blocked`); break; }
+      failedInARow++; errors.push(`${googleLabel(gm)} ${t.kind} ${t.a}: ${e.message.split('\n')[0].slice(0, 120)}`);
     }
     await sleep(2500);
   }
@@ -577,10 +613,10 @@ async function searchDuffel(dates) {
       const sg = pick.slices[0].segments[0];
       const n = (t) => bagsOf(pick).filter((b) => b.type === t).reduce((x, b) => x + b.quantity, 0);
       results.push({
-        kind: 'out', legs: [{ date: d, time: `${sg.departing_at.slice(11, 16)} – ${sg.arriving_at.slice(11, 16)}`, stops: 0, hours: null, airline: outAirlineHe() }],
+        kind: 'out', legs: [{ date: d, time: `${sg.departing_at.slice(11, 16)} – ${sg.arriving_at.slice(11, 16)}`, stops: 0, hours: null, airline: outAirlineName() }],
         price: Number(pick.total_amount), currency: pick.total_currency, source: 'duffel',
         bags: bagsOf(pick).length ? [n('carry_on'), n('checked')] : [], fare: pick.slices[0].fare_brand_name || '',
-        airlines: [outAirlineHe()], url: null,
+        airlines: [outAirlineName()], url: null,
       });
     } catch (e) { errors.push(`duffel ${d}: ${e.message.slice(0, 80)}`); }
   }
@@ -591,6 +627,7 @@ async function searchDuffel(dates) {
 // Sends a message to this user. Tried once more on failure; a message that still fails is logged
 // (logs/searches.csv, source "telegram") and the run goes on, so the search state is still saved.
 async function telegram(text, type = 'message') {
+  text = trackLinks(text, USER_ID, type); // links go through the click counter when it is set up (lib/clicks.js)
   if (DRY) { console.log('--- TELEGRAM (dry run) ---\n' + text + '\n---'); return; }
   const token = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
   const chatId = USER.chatId;
@@ -620,18 +657,19 @@ async function telegram(text, type = 'message') {
   }
 }
 // ---------- formatting ----------
-function hoursText(h) { return h ? `${Math.floor(h)}:${String(Math.round((h % 1) * 60)).padStart(2, '0')} ש׳` : ''; }
-function stopsText(n) { return n === 0 ? 'ישיר' : n === 1 ? 'עצירה אחת' : n != null ? `${n} עצירות` : ''; }
+// Every text below comes from the user's language file (docs/locales, section "search").
+function hoursText(h) { return h ? T('dur', Math.floor(h), String(Math.round((h % 1) * 60)).padStart(2, '0')) : ''; }
+function stopsText(n) { return n === 0 ? T('stops0') : n === 1 ? T('stops1') : n != null ? T('stopsN', n) : ''; }
 function link(o, label) { return o.url ? `<a href="${o.url}">${label}</a>` : label; }
 function cleanTime(t) { return (t || '').replace(/\s?[–-]\s?/, '–').replace(/\s+/g, ' ').trim(); }
 // One leg on one line: who · when · times · stops · flight time [· price]
 function legLine(icon, label, l, priceText) {
-  return `${icon} <b>${label}</b> ${[l.airline || '?', heDate(l.date), cleanTime(l.time), stopsText(l.stops), hoursText(l.hours), priceText].filter(Boolean).join(' · ')}`;
+  return `${icon} <b>${label}</b> ${[l.airline || '?', dayDate(l.date), cleanTime(l.time), stopsText(l.stops), hoursText(l.hours), priceText].filter(Boolean).join(' · ')}`;
 }
 function bagsLine(offers) {
-  if (!CONFIG.checkedBags && !CONFIG.carryOn) return '🧳 בלי כבודה';
-  const want = [CONFIG.carryOn ? 'תיק עלייה' : '', CONFIG.checkedBags ? (CONFIG.checkedBags === 1 ? 'מזוודה' : `${CONFIG.checkedBags} מזוודות`) : ''].filter(Boolean).join(' + ');
-  return offers.every(bagOk) ? `🧳 ${want} כלולים${PAX > 1 ? ' (לנוסע)' : ''}` : `🧳 * לא ידוע אם ${want} כלולים, לבדוק בהזמנה`;
+  if (!CONFIG.checkedBags && !CONFIG.carryOn) return T('noBags');
+  const want = [CONFIG.carryOn ? T('carryOn') : '', CONFIG.checkedBags ? T('checkedN', CONFIG.checkedBags) : ''].filter(Boolean).join(' + ');
+  return offers.every(bagOk) ? T('bagsIncluded', want, PAX > 1 ? T('perPaxParen') : '') : T('bagsUnknown', want);
 }
 // Price with "*" when it is not known whether the bags are included.
 const priceTag = (c) => `<b>${fmtBoth(c.usd)}${bagUnknown(c) ? '*' : ''}</b>`;
@@ -647,15 +685,15 @@ function pickDistinct(list, n) {
 }
 // Trip type, used to show varied options rather than the same trip at different dates.
 function tripType(c) {
-  if (c.kind === 'mixed') return 'שני כרטיסים';
-  if (c.kind === 'ow') return c.offers[0].legs[0].stops === 0 ? 'כיוון אחד, ישיר' : 'כיוון אחד';
+  if (c.kind === 'mixed') return T('twoTickets');
+  if (c.kind === 'ow') return c.offers[0].legs[0].stops === 0 ? T('owNonstop') : T('ow');
   const o = c.offers[0].legs[0] || {}; const r = c.offers[0].legs[1] || {};
   const name = (o.airline || '').split(' + ')[0];
   const sameBack = name && (r.airline || '').includes(name);
-  const out = o.stops === 0 ? 'ישיר' : 'עם עצירה';
-  if (r.stops === undefined && !r.time) return `${name || 'הלוך-חזור'}, הלוך ${out}`; // Google: return details in the link
-  if (r.stops === 0) return sameBack ? `${name} ${out === 'ישיר' ? 'ישיר הלוך וחזור' : 'הלוך-חזור'}` : 'חזור ישיר בחברה אחרת';
-  return sameBack ? `${name}, חזור עם עצירה` : 'חזור עם עצירה בחברה אחרת';
+  const out = o.stops === 0 ? T('nonstop') : T('withStop');
+  if (r.stops === undefined && !r.time) return T('rtGoogle', name || T('rt'), out); // Google: return details in the link
+  if (r.stops === 0) return sameBack ? (o.stops === 0 ? T('nonstopBoth', name) : T('sameRt', name)) : T('retNonstopOther');
+  return sameBack ? T('retStopSame', name) : T('retStopOther');
 }
 // The cheapest option of every trip type first, then other cheap options on different dates.
 function pickDiverse(list, n) {
@@ -671,9 +709,9 @@ function alsoText(c) {
   const uniq = [...new Map(c.alsoDates.filter((x) => `${x.out}>${x.ret || ''}` !== `${c.out}>${c.ret || ''}`).map((x) => [`${x.out}>${x.ret || ''}`, x])).values()];
   if (!uniq.length) return '';
   c = { ...c, alsoDates: uniq };
-  const dd = (iso) => `${Number(iso.slice(8))}.${Number(iso.slice(5, 7))}`;
+  const dd = (iso) => I18n.shortDate(LANG, iso);
   const ds = c.alsoDates.slice(0, 5).map((x) => (x.ret ? `${dd(x.out)}→${dd(x.ret)}` : dd(x.out)));
-  return `\n📅 אותו מחיר גם: ${ds.join(', ')}${c.alsoDates.length > 5 ? ` ועוד ${c.alsoDates.length - 5}` : ''}`;
+  return '\n' + T('also', ds.join(', '), c.alsoDates.length > 5 ? T('andMore', c.alsoDates.length - 5) : '');
 }
 // Low-cost airlines: also a link to the airline's own site (often the same fare or cheaper, without agency fees).
 // Wizz Air and Ryanair open with the route, dates and passengers filled in (checked 13.11.2026); the other sites
@@ -693,7 +731,8 @@ const LOW_COST = [
 ];
 // Links for the low-cost airlines of a trip: one round-trip link when both legs are on the same airline,
 // otherwise one link per leg. Only legs flown by a single airline (a mix of airlines can't be booked there).
-function lowCostLinks(c) {
+function lowCostLinks(c) { const l = lowCostList(c); return l.length ? '\n' + T('alsoAirline', l.join(' · ')) : ''; }
+function lowCostList(c) {
   const legs = c.kind === 'mixed' ? [c.offers[0].legs[0], c.offers[1].legs[0]] : c.offers[0].legs;
   const lcc = (l) => (l && l.airline && !/[+,]/.test(l.airline) ? LOW_COST.find(([re]) => re.test(l.airline)) : null);
   const mk = ([, name, u], o, d, a, b) => `<a href="${typeof u === 'function' ? u(o, d, a, b, CONFIG.pax) : u}">${name}</a>`;
@@ -704,7 +743,7 @@ function lowCostLinks(c) {
     if (out) links.push(mk(out, CONFIG.origin, CONFIG.destination, legs[0].date, null));
     if (back) links.push(mk(back, CONFIG.destination, CONFIG.origin, legs[1].date, null));
   }
-  return links.length ? `\n🔗 גם באתר החברה: ${[...new Set(links)].join(' · ')}` : '';
+  return [...new Set(links)];
 }
 // The user's preferred airlines: their cheapest nonstop option each (bags rule met), shown first with ⭐.
 function preferredFirst(list) {
@@ -723,92 +762,55 @@ function optionsText(list, n) {
   const { pref, rest } = preferredFirst(list);
   const others = pickDiverse(rest, Math.max(1, n - pref.length));
   const names = PREFER.map((x) => ({ Y4: 'Volaris', AM: 'Aeroméxico', VB: 'Viva Aerobus' }[x] || x)).join(' / ');
-  const prefText = pref.length ? [`⭐ <b>טיסות ישירות ב-${names}:</b>`, pref.map((c, i) => candText(c, i)).join('\n\n'), '', ...(others.length ? ['<b>אפשרויות נוספות:</b>'] : [])] : [];
+  const prefText = pref.length ? [T('prefHead', names), pref.map((c, i) => candText(c, i)).join('\n\n'), '', ...(others.length ? [T('moreOptions')] : [])] : [];
   return [...prefText, others.map((c, i) => candText(c, i + pref.length)).join('\n\n')].join('\n');
 }
 function candText(c, i) {
   if (c.kind === 'ow') {
     const o = c.offers[0];
     return [
-      `${NUM[i] || i + 1 + ')'} ${priceTag(c)} · ${tripType(c)} · ${link(o, 'להזמנה ב-' + o.source)}`,
-      legLine('🛫', 'הלוך', o.legs[0]),
+      `${NUM[i] || i + 1 + ')'} ${priceTag(c)} · ${tripType(c)} · ${link(o, T('bookAt', o.source))}`,
+      legLine('🛫', T('out'), o.legs[0]),
       bagsLine([o]),
     ].join('\n') + lowCostLinks(c) + alsoText(c);
   }
   if (c.kind === 'rt') {
     const o = c.offers[0];
     return [
-      `${NUM[i] || i + 1 + ')'} ${priceTag(c)} · ${tripType(c)} · ${link(o, 'להזמנה ב-' + o.source)}`,
-      legLine('🛫', 'הלוך', o.legs[0]),
-      legLine('🛬', 'חזור', o.legs[1]),
+      `${NUM[i] || i + 1 + ')'} ${priceTag(c)} · ${tripType(c)} · ${link(o, T('bookAt', o.source))}`,
+      legLine('🛫', T('out'), o.legs[0]),
+      legLine('🛬', T('back'), o.legs[1]),
       bagsLine([o]),
     ].join('\n') + lowCostLinks(c) + alsoText(c);
   }
   const [o, r] = c.offers;
   return [
-    `${NUM[i] || i + 1 + ')'} ${priceTag(c)} · 2 כרטיסים נפרדים`,
-    legLine('🛫', 'הלוך', o.legs[0], `${link(o, fmtBoth(o.usd))} · ${o.source}`),
-    legLine('🛬', 'חזור', r.legs[0], `${link(r, fmtBoth(r.usd))} · ${r.source}`),
+    `${NUM[i] || i + 1 + ')'} ${priceTag(c)} · ${T('twoSeparate')}`,
+    legLine('🛫', T('out'), o.legs[0], `${link(o, fmtBoth(o.usd))} · ${o.source}`),
+    legLine('🛬', T('back'), r.legs[0], `${link(r, fmtBoth(r.usd))} · ${r.source}`),
     bagsLine([o, r]),
   ].join('\n') + lowCostLinks(c) + alsoText(c);
 }
 
-// ---------- main ----------
-async function getRates() {
-  const res = await fetch('https://open.er-api.com/v6/latest/USD');
-  if (!res.ok) throw new Error(`rates HTTP ${res.status}`);
-  const j = await res.json();
-  const keep = new Set(['USD', 'EUR', 'GBP', ...CONFIG.markets.map((m) => m.currency)]);
-  return { at: j.time_last_update_utc, rates: Object.fromEntries(Object.entries(j.rates).filter(([k]) => keep.has(k))) };
-}
-
-const STARTED = Date.now();
-// Israel local date and minutes since midnight (summer and winter time handled by the time zone database).
-function israelClock(d) {
-  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
-    .formatToParts(d).map((x) => [x.type, x.value]));
-  return { day: `${parts.year}-${parts.month}-${parts.day}`, minutes: Number(parts.hour) * 60 + Number(parts.minute) };
-}
-async function main() {
-  const state = loadState();
-  const now = process.env.FAKE_NOW && DRY ? new Date(process.env.FAKE_NOW) : new Date(); // FAKE_NOW: dry-run tests only
-  // The daily summary: once per Israel calendar day, and only in the evening window (from 20:45 Israel time;
-  // the summary is due at 21:00). A summary run at another hour (e.g. GitHub's schedule arriving hours late)
-  // or a second one the same day runs as a plain check. Test runs (TEST_ALERT, FORCE_SUMMARY) always send,
-  // are marked 🧪, and do not count as the day's summary.
-  const firstSearch = process.env.FIRST_SEARCH === '1'; // right after a sign-up or a settings change: results now
-  const forceSummary = process.env.TEST_ALERT === '1' || process.env.FORCE_SUMMARY === '1' || firstSearch;
-  const il = israelClock(now);
-  if (SUMMARY && !forceSummary) {
-    if (il.minutes < (CONFIG.summaryFromMinute ?? 20 * 60 + 45)) { SUMMARY = false; console.log('summary run outside the evening window: running as a check'); }
-    else if (state.lastSummaryDay === il.day) { SUMMARY = false; console.log('daily summary already sent today: running as a check'); }
-  }
-  const markSummarySent = () => { if (!DRY && !forceSummary) { state.lastSummaryDay = il.day; state.lastSummaryAt = now.toISOString(); } };
-  let rates;
-  try { rates = await getRates(); state.rates = rates; } catch (e) {
-    if (!state.rates) throw e;
-    rates = state.rates;
-    console.log(`rates fetch failed (${e.message}); using saved rates`);
-  }
-  ILS_PER_USD = rates.rates.ILS || null;
-
-  const browser = await chromium.launch(process.env.HTTPS_PROXY ? { proxy: { server: process.env.HTTPS_PROXY } } : {});
+// ---------- search one profile ----------
+const KAYAK_BLOCKED = new Set();
+// All sources for the current profile (one round trip / one way, or one flight of a trip). Returns valid offers.
+async function searchAll(browser, state, now, rates) {
   const t0 = Date.now();
   const timed = (name, pr) => pr.then((r) => { console.log(`[${name}] ${r.results.length} results, ${r.errors.length} errors, ${Math.round((Date.now() - t0) / 1000)}s`); return r; });
 
   // Kayak: every market x every task, a few pages at a time.
   // Wide date ranges: each run checks a different slice of the Kayak windows (Kiwi always covers everything).
-  state.kayakTurn = (state.kayakTurn || 0) + 1;
   const tasks = kayakTasks(state.kayakTurn);
   console.log(`kayak tasks per market: ${tasks.length}`);
   const kayakJob = (async () => {
     const jobs = CONFIG.markets.flatMap((m) => tasks.map((t) => ({ m, t })));
-    const blockedHosts = new Set(); // after a block, the rest of that site's searches in this run are skipped
+    const blockedHosts = KAYAK_BLOCKED; // after a block, the rest of that site's searches in this run are skipped
     const res = await pool(jobs, CONFIG.concurrency || 6, async ({ m, t }) => {
       if (blockedHosts.has(m.host)) { logSearch('kayak', m.host, t.kind, 'skipped', 0, 0, 0, 'site blocked earlier in this run'); return { results: [], errors: [] }; }
       try { return { results: await tracked('kayak', m.host, t.kind, () => kayakSearch(browser, m, t)), errors: [] }; } catch (e) {
         if (e.blocked) blockedHosts.add(m.host);
-        return { results: [], errors: [`${m.label || m.host} ${t.kind}: ${e.message.split('\n')[0].slice(0, 80)}`] };
+        return { results: [], errors: [`${kayakLabel(m)} ${t.kind}: ${e.message.split('\n')[0].slice(0, 80)}`] };
       }
     });
     return { results: res.flatMap((r) => r.results), errors: res.flatMap((r) => r.errors) };
@@ -824,13 +826,12 @@ async function main() {
       return out;
     })()
     : Promise.resolve({ results: [], errors: [] });
-  const duffelDue = OWNER && SIMPLE_PAX && !!OUT.airline && OUT.maxStops === 0 && !!(process.env.DUFFEL_TOKEN || '').trim()
+  const duffelDue = !TRIP && OWNER && SIMPLE_PAX && !!OUT.airline && OUT.maxStops === 0 && !!(process.env.DUFFEL_TOKEN || '').trim()
     && (!state.lastDuffelAt || (now - new Date(state.lastDuffelAt)) / 36e5 >= (CONFIG.duffelEveryHours || 8) - 0.5);
   if (duffelDue) state.lastDuffelAt = now.toISOString();
   const duffelJob = duffelDue ? searchDuffel(outDates) : Promise.resolve({ results: [], errors: [] });
 
   const parts = await Promise.all([timed('kayak', kayakJob), timed('kiwi', kiwiJob), timed('google', googleJob), timed('duffel', duffelJob)]);
-  await browser.close();
 
   const errors = parts.flatMap((p) => p.errors);
   const valid = (list) => list
@@ -840,7 +841,11 @@ async function main() {
       : o.kind === 'ret' ? legOkRet(o.legs[0])
         : o.legs.length === 2 && legOkOut(o.legs[0]) && legOkRet(o.legs[1]) && pairOk(o.legs[0].date, o.legs[1].date)));
   const offers = valid(parts.flatMap((p) => p.results));
+  return { offers, errors };
+}
 
+// Offers -> trips to show: one ticket, two separate tickets, or one way; cheapest first.
+function candidates(offers) {
   // Cheapest one-way per date (kept apart by bag status), then all allowed combinations.
   const cheapestBy = (kind, state) => {
     const m = new Map();
@@ -871,10 +876,185 @@ async function main() {
   // One line per (kind, dates, bag known): a cheaper no-bag price must not hide the with-bag price of the same trip.
   const seen = new Set();
   const top = cands.filter((c) => { const k = `${c.kind}|${c.out}|${c.ret}|${c.offers.map(bagState).join(',')}|${c.prefer || ''}`; if (seen.has(k)) return false; seen.add(k); return true; });
-  if (process.env.DUMP_OFFERS) fs.writeFileSync(process.env.DUMP_OFFERS, JSON.stringify({ at: now.toISOString(), ils: ILS_PER_USD, offers }, null, 0));
   const best = top[0];
   const bestBag = top.find((c) => c.offers.every(bagReq)); // cheapest that meets the bag rule
+  return { top, best, bestBag, cands };
+}
 
+
+// ---------- trips (several one-way flights) ----------
+// A flight's state is kept only while its route, dates and passengers stay the same.
+const legSig = (q) => [q.origin, q.destination, q.outFrom, q.outTo, q.adults, q.children, q.infants].join('|');
+// The same re-alert rule as a single search, per flight: a new alert when the price dropped enough or enough time passed.
+function legShouldAlert(under, last, now, test) {
+  if (!under.length) return false;
+  if (test || !last) return true;
+  return under[0].usd <= last.usd - CONFIG.realertDropUsd || (now - new Date(last.at)) / 36e5 >= CONFIG.realertHours;
+}
+// "10–16.1" / "10–16 Jan", in the user's language
+const shortRange = (a, b) => I18n.dateRange(LANG, a, b);
+// One option of a trip's flight on one line: price · site · airline, stops · day and time · booking link.
+function tripOptLine(c) {
+  const o = c.offers[0]; const l = o.legs[0];
+  const what = [l.airline, stopsText(l.stops)].filter(Boolean).join(', ');
+  const time = l.time ? ' ' + cleanTime(l.time).split('–')[0] : '';
+  const lcc = lowCostList(c);
+  return `   💰 ${priceTag(c)}${PAX > 1 ? T('perPax') : ''} · ${o.source} · ${what} · ${dayDate(l.date)}${time} · ${link(o, T('book'))}`
+    + (lcc.length ? ` · 🔗 ${lcc.join(' · ')}` : '');
+}
+// One flight of the trip (for the current profile): a route line, then the cheapest option, and a second one only
+// when it is on another date and costs at most 10% more.
+function tripLegText(i, list, withLimit) {
+  const head = `${NUM[i] || i + 1 + ')'} <b>${cityName(CONFIG.origin)} → ${cityName(CONFIG.destination)}</b> · ${shortRange(OUT.from, OUT.to)} · ${T('paxN', PAX)}${withLimit ? T('limit', fmtUsd(CONFIG.maxPriceUsd)) : ''}`;
+  if (!list.length) return `${head}\n   ${T('noPrice')}`;
+  const pick = [list[0]];
+  const second = list.find((c) => c.out !== list[0].out && c.usd <= list[0].usd * 1.1);
+  if (second) pick.push(second);
+  return [head, ...pick.map(tripOptLine)].join('\n');
+}
+// Total of the cheapest option of every flight, times that flight's passengers. Flights with no price are listed apart.
+function tripTotal(legs) {
+  const found = legs.filter((l) => l.best);
+  return { usd: found.reduce((s, l) => s + l.best.usd * l.pax, 0), missing: legs.filter((l) => !l.best).map((l) => l.i + 1) };
+}
+
+async function mainTrip({ browser, state, now, rates, forceSummary, firstSearch, markSummarySent }) {
+  const p = USER.prefs; const n = p.legs.length;
+  const TEST = process.env.TEST_ALERT === '1'; // test runs always alert and do not touch the real alert history
+  state.legs = Array.isArray(state.legs) ? state.legs : [];
+  delete state.lastAlert; // a trip keeps its alerts per flight
+  const legs = []; const errors = []; let offersCount = 0;
+  // One flight after the other, in the same browser. The day's Google and Kayak budgets are shared by the flights,
+  // so a trip makes about as many searches as one round trip.
+  for (let i = 0; i < n; i++) {
+    const q = codec.legPrefs(p, i);
+    useProfile(q, `leg${i + 1}`);
+    CONFIG.googleMaxSearches = Math.max(2, Math.floor((BASE.googleMaxSearches || 10) / n));
+    CONFIG.kayakMaxTasks = Math.max(4, Math.floor((BASE.kayakMaxTasks || 24) / n));
+    const sig = legSig(q);
+    if (!state.legs[i] || state.legs[i].sig !== sig) state.legs[i] = { sig };
+    const ls = state.legs[i];
+    const r = await searchAll(browser, state, now, rates);
+    offersCount += r.offers.length;
+    errors.push(...r.errors.map((e) => `leg${i + 1} ${e}`));
+    const { top, bestBag } = candidates(r.offers);
+    const ok = top.filter((c) => c.offers.every(bagReq));
+    const under = ok.filter((c) => c.usd <= CONFIG.maxPriceUsd);
+    const alert = legShouldAlert(under, ls.lastAlert, now, TEST);
+    if (alert && !TEST) ls.lastAlert = { at: now.toISOString(), usd: under[0].usd };
+    ls.bestUsd = bestBag ? Math.round(bestBag.usd) : null;
+    legs.push({
+      i, pax: PAX, best: bestBag || null, any: !!top.length,
+      summary: tripLegText(i, ok, true), summaryUnknown: ok.slice(0, 2).some(bagUnknown),
+      alertText: alert ? tripLegText(i, under, true) : null, alertUnknown: under.slice(0, 2).some(bagUnknown),
+    });
+    console.log(`flight ${i + 1}: valid offers ${r.offers.length}${alert ? ', alert' : ''}`);
+  }
+  state.legs.length = n;
+  const bagTxt = CONFIG.checkedBags ? T('bagsPerPax', T('checkedN', CONFIG.checkedBags)) : '';
+  const cabinTxt = CONFIG.cabin === 'economy' ? '' : T('cabins')[CONFIG.cabin];
+  const total = tripTotal(legs);
+  const anyPrice = legs.some((l) => l.any);
+
+  for (const [k, v] of errors.reduce((m, e) => m.set(scrub(e).slice(0, 140), (m.get(scrub(e).slice(0, 140)) || 0) + 1), new Map())) console.log(`error x${v}: ${k}`);
+  state.lastRun = { at: now.toISOString(), ok: anyPrice, bestUsd: !total.missing.length && total.usd ? Math.round(total.usd) : null, errors: errors.length };
+  state.failStreak = anyPrice ? 0 : (state.failStreak || 0) + 1;
+  const title = T('tripTitle', n);
+  const testMark = forceSummary && !firstSearch ? [T('testMark')] : [];
+  const kind = firstSearch ? 'first-results' : forceSummary ? 'test-summary' : 'summary';
+
+  if (!anyPrice) {
+    if (state.failStreak === 6 && OWNER) await telegram(T('failStreak'), 'warning');
+    writeLogs('no prices', offersCount, STARTED);
+    if (SUMMARY) { await telegram([...testMark, `🛫 ${firstSearch ? T('firstWord') : T('dailyWord')} · ${title}: ${T('noPrices')}`].join('\n'), kind); markSummarySent(); }
+    saveState(state);
+    console.log('no prices found');
+    return;
+  }
+
+  // An alert only about the flights that are under their own limit.
+  const alerting = legs.filter((l) => l.alertText);
+  if (alerting.length) {
+    await telegram([
+      ...(TEST ? [T('testAlert')] : []),
+      T('tripAlertHead', title), '',
+      alerting.map((l) => l.alertText).join('\n\n'), '',
+      ...(alerting.some((l) => l.alertUnknown) ? [T('unknownNote')] : []),
+      T('tip'),
+    ].join('\n'), TEST ? 'test-alert' : 'alert');
+  }
+
+  if (SUMMARY) {
+    const totalLine = total.usd
+      ? T('total', total.missing.length ? T('totalMissing', total.missing.join(', ')) : '', fmtBoth(total.usd))
+      : T('totalNone');
+    await telegram([
+      ...testMark,
+      firstSearch ? T('firstHead', title) : T('dailyHead', title),
+      ...([bagTxt, cabinTxt].filter(Boolean).length ? [`<i>${[bagTxt, cabinTxt].filter(Boolean).join(' · ')}</i>`] : []),
+      '',
+      legs.map((l) => l.summary).join('\n\n'),
+      '━━━━━━━━',
+      totalLine,
+      ...(fmtLocalCur(1) ? [T('rate', rateText())] : []),
+      ...(legs.some((l) => l.summaryUnknown) ? [T('unknownNote')] : []),
+      ...(OWNER && errors.length ? [T('ownerErrors', errors.length)] : []),
+      '', T('footer'),
+    ].join('\n'), kind);
+    markSummarySent();
+  }
+  writeLogs('prices', offersCount, STARTED);
+  saveState(state);
+}
+
+// ---------- main ----------
+async function getRates() {
+  const res = await fetch('https://open.er-api.com/v6/latest/USD');
+  if (!res.ok) throw new Error(`rates HTTP ${res.status}`);
+  const j = await res.json();
+  const keep = new Set(['USD', 'EUR', 'GBP', LOCAL.currency, ...Object.values(BASE.kayakSites || {}).map((m) => m.currency)]);
+  return { at: j.time_last_update_utc, rates: Object.fromEntries(Object.entries(j.rates).filter(([k]) => keep.has(k))) };
+}
+
+const STARTED = Date.now();
+// The user's local date and minutes since midnight (their time zone: chosen, or the origin airport's).
+const localClock = (d) => Regions.clock(d, LOCAL.tz);
+// Israel local date and minutes since midnight (summer and winter time handled by the time zone database).
+function israelClock(d) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+    .formatToParts(d).map((x) => [x.type, x.value]));
+  return { day: `${parts.year}-${parts.month}-${parts.day}`, minutes: Number(parts.hour) * 60 + Number(parts.minute) };
+}
+async function main() {
+  const state = loadState();
+  const now = process.env.FAKE_NOW && DRY ? new Date(process.env.FAKE_NOW) : new Date(); // FAKE_NOW: dry-run tests only
+  // The daily summary: once per local calendar day of the user, and only in the evening window (from 20:45 on the
+  // user's clock; the summary is due at 21:00, config.json "summaryHour"). A summary run at another hour (e.g. GitHub's schedule arriving hours late)
+  // or a second one the same day runs as a plain check. Test runs (TEST_ALERT, FORCE_SUMMARY) always send,
+  // are marked 🧪, and do not count as the day's summary.
+  const firstSearch = process.env.FIRST_SEARCH === '1'; // right after a sign-up or a settings change: results now
+  const forceSummary = process.env.TEST_ALERT === '1' || process.env.FORCE_SUMMARY === '1' || firstSearch;
+  const il = localClock(now); // the summary is due at 21:00 on the user's own clock
+  if (SUMMARY && !forceSummary) {
+    if (il.minutes < (CONFIG.summaryFromMinute ?? (CONFIG.summaryHour ?? 21) * 60 - 15)) { SUMMARY = false; console.log('summary run outside the evening window: running as a check'); }
+    else if (state.lastSummaryDay === il.day) { SUMMARY = false; console.log('daily summary already sent today: running as a check'); }
+  }
+  const markSummarySent = () => { if (!DRY && !forceSummary) { state.lastSummaryDay = il.day; state.lastSummaryAt = now.toISOString(); } };
+  let rates;
+  try { rates = await getRates(); state.rates = rates; } catch (e) {
+    if (!state.rates) throw e;
+    rates = state.rates;
+    console.log(`rates fetch failed (${e.message}); using saved rates`);
+  }
+  LOCAL_RATE = rates.rates[LOCAL.currency] || null;
+
+  const browser = await chromium.launch(process.env.HTTPS_PROXY ? { proxy: { server: process.env.HTTPS_PROXY } } : {});
+  state.kayakTurn = (state.kayakTurn || 0) + 1;
+  if (TRIP) { try { await mainTrip({ browser, state, now, rates, forceSummary, firstSearch, markSummarySent }); } finally { await browser.close().catch(() => {}); } return; }
+  const { offers, errors } = await searchAll(browser, state, now, rates);
+  await browser.close();
+  const { top, best, bestBag, cands } = candidates(offers);
+  if (process.env.DUMP_OFFERS) fs.writeFileSync(process.env.DUMP_OFFERS, JSON.stringify({ at: now.toISOString(), rate: LOCAL_RATE, currency: LOCAL.currency, offers }, null, 0));
   vlog(errors.map((e) => 'WARN ' + e).join('\n'));
   // Public logs: error kinds and counts only, with links (route, dates) removed.
   const errKinds = new Map();
@@ -887,10 +1067,10 @@ async function main() {
   state.failStreak = best ? 0 : (state.failStreak || 0) + 1;
 
   if (!best) {
-    if (state.failStreak === 6 && OWNER) await telegram('⚠️ בוט הטיסות לא הצליח לקרוא מחירים 6 פעמים ברצף. אני ממשיך לנסות.', 'warning');
+    if (state.failStreak === 6 && OWNER) await telegram(T('failStreak'), 'warning');
     writeLogs('no prices', offers.length, STARTED);
     saveState(state);
-    if (SUMMARY) { await telegram(`${forceSummary && !firstSearch ? '🧪 <i>בדיקה, לא הסיכום היומי</i>\n' : ''}🛫 ${firstSearch ? 'החיפוש הראשון' : 'סיכום יומי'}: לא הצלחתי לקרוא מחירים. אנסה שוב בהרצה הבאה.`, firstSearch ? 'first-results' : forceSummary ? 'test-summary' : 'summary'); markSummarySent(); saveState(state); }
+    if (SUMMARY) { await telegram(`${forceSummary && !firstSearch ? T('testMark') + '\n' : ''}🛫 ${firstSearch ? T('firstWord') : T('dailyWord')}: ${T('noPrices')}`, firstSearch ? 'first-results' : forceSummary ? 'test-summary' : 'summary'); markSummarySent(); saveState(state); }
     console.log('no prices found');
     return;
   }
@@ -900,24 +1080,24 @@ async function main() {
   const hoursSince = last ? (now - new Date(last.at)) / 36e5 : Infinity;
   const TEST = process.env.TEST_ALERT === '1'; // test runs always alert and do not touch the real alert history
   const shouldAlert = under.length > 0 && (TEST || !last || under[0].usd <= last.usd - CONFIG.realertDropUsd || hoursSince >= CONFIG.realertHours);
-  const outDesc = [OUT.airline ? `ב${outAirlineHe()}` : '', OUT.maxStops === 0 ? 'ישיר' : ''].filter(Boolean).join(' ');
-  const stopsTxt = (n) => (n === 0 ? 'ישיר' : n === 1 ? 'עד עצירה אחת' : `עד ${n} עצירות`);
-  const paxTxt = PAX > 1 ? ` · ${PAX} נוסעים, מחירים לנוסע` : '';
-  const cabinTxt = CONFIG.cabin === 'economy' ? '' : ` · ${{ premium: 'פרימיום', business: 'עסקים', first: 'ראשונה' }[CONFIG.cabin]}`;
-  const bagTxt = CONFIG.checkedBags ? ` · ${CONFIG.checkedBags === 1 ? 'מזוודה' : CONFIG.checkedBags + ' מזוודות'} לנוסע` : '';
-  const title = `✈️ ${cityHe(CONFIG.origin)} ${RET ? '⇄' : '→'} ${cityHe(CONFIG.destination)}${outDesc ? ' · הלוך ' + outDesc : ''}`;
+  const outDesc = [OUT.airline ? T('onAirline', outAirlineName()) : '', OUT.maxStops === 0 ? T('nonstop') : ''].filter(Boolean).join(' ');
+  const stopsTxt = (n) => (n === 0 ? T('upTo0') : n === 1 ? T('upTo1') : T('upToN', n));
+  const paxTxt = PAX > 1 ? T('paxPrices', PAX) : '';
+  const cabinTxt = CONFIG.cabin === 'economy' ? '' : ` · ${T('cabins')[CONFIG.cabin]}`;
+  const bagTxt = CONFIG.checkedBags ? ` · ${T('bagsPerPax', T('checkedN', CONFIG.checkedBags))}` : '';
+  const title = `✈️ ${cityName(CONFIG.origin)} ${RET ? '⇄' : '→'} ${cityName(CONFIG.destination)}${outDesc ? T('outPrefix', outDesc) : ''}`;
   const rules = RET
-    ? `<i>הלוך ${heDate(OUT.from)}–${heDate(OUT.to)} (${stopsTxt(OUT.maxStops)}) · חזור ${heDate(RET.from)}–${heDate(RET.to)} (${stopsTxt(RET.maxStops)}${RET.maxHours ? `, עד ${RET.maxHours} ש׳` : ''})${CONFIG.maxTripDays ? ` · עד ${CONFIG.maxTripDays} ימים` : ''}${bagTxt}${cabinTxt}${paxTxt}</i>`
-    : `<i>כיוון אחד · ${heDate(OUT.from)}–${heDate(OUT.to)} (${stopsTxt(OUT.maxStops)})${bagTxt}${cabinTxt}${paxTxt}</i>`;
+    ? `<i>${T('rulesOut', dayDate(OUT.from), dayDate(OUT.to), stopsTxt(OUT.maxStops))} · ${T('rulesRet', dayDate(RET.from), dayDate(RET.to), stopsTxt(RET.maxStops), RET.maxHours ? T('retHours', RET.maxHours) : '')}${CONFIG.maxTripDays ? T('maxDays', CONFIG.maxTripDays) : ''}${bagTxt}${cabinTxt}${paxTxt}</i>`
+    : `<i>${T('rulesOw', dayDate(OUT.from), dayDate(OUT.to), stopsTxt(OUT.maxStops))}${bagTxt}${cabinTxt}${paxTxt}</i>`;
 
   if (shouldAlert) {
     await telegram([
-      ...(TEST ? ['🧪 <i>הודעת בדיקה, הסף הועלה זמנית</i>'] : []),
-      `🔔 <b>נמצא מחיר מתחת ל-${fmtBoth(CONFIG.maxPriceUsd)}!</b>`,
+      ...(TEST ? [T('testAlert')] : []),
+      T('alertHead', fmtBoth(CONFIG.maxPriceUsd)),
       title, '',
       optionsText(under, 5), '',
-      ...(under.slice(0, 5).some(bagUnknown) ? ['<i>* לא ידוע אם הכבודה כלולה במחיר</i>'] : []),
-      '💡 לפתוח בגלישה בסתר, לוודא שהמזוודה כלולה, ולקנות מהר.',
+      ...(under.slice(0, 5).some(bagUnknown) ? [T('unknownNote')] : []),
+      T('tip'),
     ].join('\n'), TEST ? 'test-alert' : 'alert');
     if (!TEST) state.lastAlert = { at: now.toISOString(), usd: under[0].usd };
   }
@@ -925,11 +1105,11 @@ async function main() {
   // When Kayak gave nothing (it blocks automated searches from GitHub's servers), links to check it yourself.
   const kayakCount = offers.filter((o) => /kayak/i.test(o.url || '')).length;
   const kc = bestBag || best;
-  const kayakLinks = kayakCount ? '' : `🔎 לבדוק גם ב-Kayak בעצמך (±3 ימים): ${CONFIG.markets.map((m) => {
+  const kayakLinks = kayakCount ? '' : T('kayakSelf', CONFIG.markets.map((m) => {
     const bag = m.bagFilter && CONFIG.checkedBags ? `bfc=${CONFIG.checkedBags}` : '';
     const kind = RET ? 'rt' : 'out';
-    return `<a href="${kayakUrl(m.linkHost || m.host, kind, `${kc.out}-flexible-3days`, RET && kc.ret && `${kc.ret}-flexible-3days`, [kayakFs(kind), bag].filter(Boolean).join(';'))}">${m.label || m.host}</a>`;
-  }).join(' · ')}`;
+    return `<a href="${kayakUrl(m.linkHost || m.host, kind, `${kc.out}-flexible-3days`, RET && kc.ret && `${kc.ret}-flexible-3days`, [kayakFs(kind), bag].filter(Boolean).join(';'))}">${kayakLabel(m)}</a>`;
+  }).join(' · '));
 
   if (SUMMARY) {
     const mixed = top.find((c) => c.kind === 'mixed' && c.offers.every(bagReq));
@@ -937,18 +1117,18 @@ async function main() {
       .map((s) => [s, Math.min(...offers.filter((o) => o.kind === 'rt' && bagReq(o) && o.source === s).map((o) => o.usd))])
       .sort((a, b) => a[1] - b[1]).map(([s, u]) => `${s} ${fmtBoth(u)}`).join(' · ');
     await telegram([
-      ...(forceSummary && !firstSearch ? ['🧪 <i>בדיקה, לא הסיכום היומי</i>'] : []),
-      firstSearch ? `🔎 <b>תוצאות ראשונות</b> · ${title}` : `🌙 <b>סיכום יומי</b> · ${title}`,
+      ...(forceSummary && !firstSearch ? [T('testMark')] : []),
+      firstSearch ? T('firstHead', title) : T('dailyHead', title),
       rules, '',
-      bestBag ? `הזול ביותר${PAX > 1 ? ' (לנוסע)' : ''}: ${priceTag(bestBag)} · הסף: ${fmtBoth(CONFIG.maxPriceUsd)}` : `לא נמצא מחיר מתאים · הסף: ${fmtBoth(CONFIG.maxPriceUsd)}`,
-      ...(ILS_PER_USD ? [`💱 שער היום: $1 = ₪${ILS_PER_USD.toFixed(2)}`] : []), '',
+      bestBag ? T('best', PAX > 1 ? T('perPaxParen') : '', priceTag(bestBag), fmtBoth(CONFIG.maxPriceUsd)) : T('noMatch', fmtBoth(CONFIG.maxPriceUsd)),
+      ...(fmtLocalCur(1) ? [T('rate', rateText())] : []), '',
       optionsText(top.filter((c) => c.offers.every(bagReq)), 5), '',
-      ...(top.filter((c) => c.offers.every(bagReq)).slice(0, 5).some(bagUnknown) ? ['<i>* לא ידוע אם הכבודה כלולה במחיר</i>'] : []),
-      ...(rtBySource ? [`📊 הלוך-חזור לפי אתר: ${rtBySource}`] : []),
-      ...(mixed ? [`🔀 שני כרטיסים נפרדים: מ-${fmtBoth(mixed.usd)}`] : []),
+      ...(top.filter((c) => c.offers.every(bagReq)).slice(0, 5).some(bagUnknown) ? [T('unknownNote')] : []),
+      ...(rtBySource ? [T('rtBySource', rtBySource)] : []),
+      ...(mixed ? [T('mixedFrom', fmtBoth(mixed.usd))] : []),
       ...(kayakLinks ? [kayakLinks] : []),
-      ...(OWNER && errors.length ? [`⚠️ ${errors.length} חיפושים נכשלו (רק אתה רואה את זה · /errors)`] : []),
-      '', '<i>/status הגדרות · /stop הפסקה</i>',
+      ...(OWNER && errors.length ? [T('ownerErrors', errors.length)] : []),
+      '', T('footer'),
     ].join('\n'), firstSearch ? 'first-results' : forceSummary ? 'test-summary' : 'summary');
     markSummarySent();
   }
@@ -965,4 +1145,4 @@ if (require.main === module) {
     process.exit(1);
   });
 }
-module.exports = { israelClock, preferredFirst, optionsText, flies, scrub, tracked, appendCsv, googleTfs, googleUrl, parseGoogleLabel, googleTasks, lowCostLinks, retryOnce, bagState, configFor, slotFrom, bagReq, bagOk, kayakUrlForTest: kayakUrl, pickDiverse, tripType, setIlsRate: (r) => { ILS_PER_USD = r; }, pairOk, legOkOut, legOkRet, parseKayakCards, candText, pickDistinct, searchCenters };
+module.exports = { useProfile, candidates, tripLegText, tripTotal, legShouldAlert, legSig, israelClock, preferredFirst, optionsText, flies, scrub, tracked, appendCsv, googleTfs, googleUrl, parseGoogleLabel, googleTasks, lowCostLinks, retryOnce, bagState, configFor, slotFrom, bagReq, bagOk, kayakUrlForTest: kayakUrl, pickDiverse, tripType, setIlsRate: (r) => { LOCAL_RATE = r; }, LOCAL, LANG, marketsFor, googleMarketsFor, localClock, pairOk, legOkOut, legOkRet, parseKayakCards, candText, pickDistinct, searchCenters };

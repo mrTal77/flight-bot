@@ -34,6 +34,8 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           OWNER_CODE: ${{ github.event.inputs.owner_code }}
+          CLICK_URL: ${{ secrets.CLICK_URL }}         # click counter (CLICKS-SETUP.md); empty = off
+          CLICK_SECRET: ${{ secrets.CLICK_SECRET }}
         run: |
           if [ -n "$OWNER_CODE" ]; then node bot.js --owner-start "$OWNER_CODE"; else node bot.js; fi
       - name: Save users
