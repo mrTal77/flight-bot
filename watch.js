@@ -172,6 +172,7 @@ async function tracked(source, market, kind, fn, waitMs = 8000, count = (r) => (
   }
 }
 const { appendCsv, logMessages } = require('./lib/logs');
+const { trackLinks } = require('./lib/clicks');
 const MESSAGES = []; // messages sent in this run, for logs/messages.csv
 // Written at the end of every real run (not dry runs), and also when a run crashes.
 function writeLogs(outcome, offersCount, startedMs) {
@@ -605,6 +606,7 @@ async function searchDuffel(dates) {
 // Sends a message to this user. Tried once more on failure; a message that still fails is logged
 // (logs/searches.csv, source "telegram") and the run goes on, so the search state is still saved.
 async function telegram(text, type = 'message') {
+  text = trackLinks(text, USER_ID, type); // links go through the click counter when it is set up (lib/clicks.js)
   if (DRY) { console.log('--- TELEGRAM (dry run) ---\n' + text + '\n---'); return; }
   const token = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
   const chatId = USER.chatId;
