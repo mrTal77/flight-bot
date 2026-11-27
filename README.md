@@ -53,6 +53,11 @@ Set in `config.json` → `signup`:
 - The waitlist is kept in order, encrypted with the users. At every bot run people get in from it while there is
   room, get a message, and their first search starts. If their dates passed while waiting, they get the form again.
 - Invite codes still work in open mode; their `label` shows where a user came from (in `/users` and `/dashboard`).
+- Ad and shared links: `https://<user>.github.io/<repo>/?src=igus1` (up to 6 letters/digits), or standard
+  `?utm_source=instagram&utm_campaign=us1` (becomes `igus1`). The page carries it in the code's invite field, and
+  `/dashboard` counts users per source (`src:igus1`). The first source a device saw is kept.
+- Markets: Israel and the US. The page opens in Hebrew for Hebrew browsers and in English for everyone else; Tel Aviv
+  is the default origin only in Hebrew; the airline list has US carriers; the ₪ hint shows only in Hebrew.
 - Owner commands: `/dashboard` (users, sign-ups today, waitlist, blocked, by language and source), `/users`,
   `/waitlist`, `/admit N` (let the first N in, even above the limits), `/block N` (deletes user N of `/users` and
   ignores their chat from then on), `/blocked`, `/unblock N`.

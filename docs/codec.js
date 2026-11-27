@@ -294,7 +294,8 @@
   var CITY = { TLV: 'תל אביב', MIA: 'מיאמי', JFK: 'ניו יורק', EWR: 'ניו יורק', LAX: 'לוס אנג׳לס', LHR: 'לונדון', CDG: 'פריז',
     FCO: 'רומא', ATH: 'אתונה', BCN: 'ברצלונה', MAD: 'מדריד', BER: 'ברלין', AMS: 'אמסטרדם', PRG: 'פראג', BUD: 'בודפשט',
     VIE: 'וינה', LCA: 'לרנקה', DXB: 'דובאי', BKK: 'בנגקוק', NRT: 'טוקיו', YYZ: 'טורונטו' };
-  var AIRLINE = { LY: ['אל על', 'El Al'], IZ: ['ארקיע', 'Arkia'], '6H': ['ישראייר', 'Israir'] };
+  var AIRLINE = { LY: ['אל על', 'El Al'], IZ: ['ארקיע', 'Arkia'], '6H': ['ישראייר', 'Israir'], UA: ['יונייטד', 'United'], DL: ['דלתא', 'Delta'],
+    AA: ['אמריקן', 'American'], B6: ['ג׳טבלו', 'JetBlue'], AS: ['אלסקה', 'Alaska'] };
   // Place names from docs/airports.json rows: [code, city, airport, country, rank, hebrew].
   var PLACES = {};
   function setPlaces(rows) { PLACES = {}; (rows || []).forEach(function (r) { PLACES[r[0]] = r; }); }

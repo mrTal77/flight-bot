@@ -19,6 +19,8 @@ const CONFIG = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), '
 // "closed" = new people only join the waitlist. Above maxUsers, or after maxNewPerDay new users in a day (UTC),
 // new people join the waitlist and are let in, in order, as soon as there is room.
 const SIGNUP = { mode: 'invite', maxUsers: CONFIG.maxUsers || 10, maxNewPerDay: 0, maxWaitlist: 500, maxChangesPerDay: 10, maxMessagesPerRun: 10, ...(CONFIG.signup || {}) };
+// Open sign-up: the landing page puts where the visitor came from (?src=igus1 or utm_source) in the invite field.
+const adSource = (code) => (code && code !== 'public' && code !== 'xxxxxx' && !inviteOf(code) ? `src:${code.toLowerCase().replace(/_+$/, '')}` : null);
 const inviteOf = (code) => (code ? (CONFIG.invites || []).find((i) => i.sha256 === store.sha256(code)) : null);
 const argv = process.argv.slice(2);
 let DRY = argv.includes('--dry');
@@ -325,6 +327,7 @@ function addUser(db, chatId, name, prefs, invite, createdAt) {
   user.name = name; user.prefs = prefs; user.owner = isOwnerChat(chatId); user.updatedAt = new Date().toISOString();
   const inv = inviteOf(invite);
   if (inv) { user.invite = invite; user.source = inv.label; } // kept (encrypted) for the /edit link; the label shows in /users
+  else if (adSource(invite)) user.source = adSource(invite); // came from an ad or a shared link (landing page ?src= / utm_source)
   db.users[user.id] = user;
   return user;
 }
@@ -488,6 +491,7 @@ async function handle(db, msg, todayIso, toDispatch) {
       if (!changeAllowed(existing, todayIso)) { await reply(chatId, tx(L, 'tooManyChanges')); return; }
       existing.name = name; existing.prefs = prefs; existing.owner = isOwner; existing.updatedAt = new Date().toISOString();
       if (!existing.invite && inviteOf(invite)) { existing.invite = invite; existing.source = inviteOf(invite).label; }
+      else if (!existing.source && adSource(invite)) existing.source = adSource(invite);
       store.deleteState(existing.id); // new settings: start fresh
     }
     // A new person: an invite is needed in "invite" mode; with no room they join the waitlist (in order).
@@ -496,7 +500,7 @@ async function handle(db, msg, todayIso, toDispatch) {
       if (SIGNUP.mode === 'invite' && !goodInvite && !waiting) { await reply(chatId, tx(L, 'badInvite')); return; }
       if (waiting || noRoom(db, todayIso) || (db.waitlist || []).length) {
         db.waitlist = db.waitlist || [];
-        const entry = { chatId, name, prefs, invite: goodInvite ? invite : undefined, at: new Date().toISOString() };
+        const entry = { chatId, name, prefs, invite, at: new Date().toISOString() }; // the invite or source is used when they get in
         if (waiting) db.waitlist[waiting - 1] = { ...entry, at: db.waitlist[waiting - 1].at }; // keeps their place in line
         else if (db.waitlist.length >= SIGNUP.maxWaitlist) { await reply(chatId, tx(L, 'waitFull')); return; }
         else db.waitlist.push(entry);

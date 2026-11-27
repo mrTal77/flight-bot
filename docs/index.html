@@ -397,7 +397,7 @@
         bags: [['0', 'בלי מזוודה'], ['1', 'מזוודה 1'], ['2', '2 מזוודות']], yesNo: [['1', 'כן'], ['0', 'לא צריך']],
         flex: [['0', 'בדיוק בתאריך הזה'], ['1', '±1 יום'], ['3', '±3 ימים'], ['5', '±5 ימים']],
         stops: [['0', 'ישיר בלבד'], ['1', 'עד עצירה אחת'], ['2', 'עד 2 עצירות'], ['3', 'לא משנה']],
-        airlines: [['', 'כל חברה'], ['LY', 'אל על'], ['6H', 'ישראייר'], ['IZ', 'ארקיע'], ['other', 'אחרת (קוד)...']],
+        airlines: [['', 'כל חברה'], ['LY', 'אל על'], ['6H', 'ישראייר'], ['IZ', 'ארקיע'], ['UA', 'יונייטד'], ['DL', 'דלתא'], ['AA', 'אמריקן'], ['other', 'אחרת (קוד)...']],
       },
     },
     en: {
@@ -439,7 +439,7 @@
         bags: [['0', 'No checked bag'], ['1', '1 checked bag'], ['2', '2 checked bags']], yesNo: [['1', 'Yes'], ['0', 'Not needed']],
         flex: [['0', 'Exactly this date'], ['1', '±1 day'], ['3', '±3 days'], ['5', '±5 days']],
         stops: [['0', 'Nonstop only'], ['1', 'Up to 1 stop'], ['2', 'Up to 2 stops'], ['3', 'Any']],
-        airlines: [['', 'Any airline'], ['LY', 'El Al'], ['6H', 'Israir'], ['IZ', 'Arkia'], ['other', 'Other (code)...']],
+        airlines: [['', 'Any airline'], ['UA', 'United'], ['DL', 'Delta'], ['AA', 'American'], ['B6', 'JetBlue'], ['AS', 'Alaska'], ['LY', 'El Al'], ['other', 'Other (code)...']],
       },
     },
   };
@@ -451,8 +451,18 @@
   try { if (params.get('p')) EDIT = FlightCodec.decode(params.get('p')); } catch (e) { EDIT = null; }
   var invite = (EDIT && EDIT.invite) || (params.get('i') || '').trim();
   try { if (invite) localStorage.setItem('fw-invite', invite); else invite = localStorage.getItem('fw-invite') || ''; } catch (e) {}
-  if (OPEN && !/^[A-Za-z0-9_-]{6}$/.test(invite)) invite = PUBLIC_INVITE; // open sign-up: no invite link needed
-  var lang = params.get('lang') || (EDIT && EDIT.lang) || (function () { try { return localStorage.getItem('fw-lang'); } catch (e) { return null; } }()) || 'he';
+  // Where the visitor came from (an ad link: ?src=igus1, or ?utm_source=instagram). It rides in the code's 6-character
+  // invite field, so the bot can count sign-ups per source (/dashboard). The first source seen is kept on this device.
+  var SRC_SHORT = { instagram: 'ig', ig: 'ig', facebook: 'fb', fb: 'fb', tiktok: 'tt', google: 'gg', whatsapp: 'wa', telegram: 'tg' };
+  var src = (params.get('src') || '').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 6);
+  if (!src && params.get('utm_source')) {
+    var us = params.get('utm_source').toLowerCase();
+    src = (SRC_SHORT[us] || us.replace(/[^a-z0-9]/g, '').slice(0, 2)) + (params.get('utm_campaign') || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 4);
+  }
+  try { if (src) { if (!localStorage.getItem('fw-src')) localStorage.setItem('fw-src', src); } src = localStorage.getItem('fw-src') || src; } catch (e) {}
+  if (OPEN && !/^[A-Za-z0-9_-]{6}$/.test(invite)) invite = src.length >= 2 ? (src + '______').slice(0, 6) : PUBLIC_INVITE; // open sign-up: no invite link needed
+  var lang = params.get('lang') || (EDIT && EDIT.lang) || (function () { try { return localStorage.getItem('fw-lang'); } catch (e) { return null; } }())
+    || (/^(he|iw)/i.test(navigator.language || '') ? 'he' : 'en'); // Israel: Hebrew; the US and everyone else: English
   if (!T[lang]) lang = 'he';
   var t = function (k) { return T[lang][k]; };
 
@@ -500,6 +510,7 @@
   if (TEST) $('testBar').hidden = false;
   if (EDIT) $('editBar').hidden = false;
   if (EDIT || TEST) { $('how').hidden = true; $('faq').hidden = true; } // returning users go straight to the form
+  if (!EDIT && lang !== 'he') $('origin').value = ''; // Tel Aviv is the default origin only for Hebrew (Israeli) visitors
 
   var iso = function (d) { return new Date(d.getTime() - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10); };
   var todayIso = iso(new Date());
@@ -534,7 +545,7 @@
   function syncPrice() {
     $('priceLabel').textContent = pax() > 1 ? t('priceLabelPax') : t('priceLabel');
     var v = Number($('maxPrice').value);
-    $('ilsHint').textContent = v ? t('ilsHint').replace('{a}', Math.round(v * ILS_PER_USD).toLocaleString('en-US')).replace('{b}', pax() > 1 ? t('perPax') : '') : '';
+    $('ilsHint').textContent = v && lang === 'he' ? t('ilsHint').replace('{a}', Math.round(v * ILS_PER_USD).toLocaleString('en-US')).replace('{b}', pax() > 1 ? t('perPax') : '') : '';
   }
   $('tripRt').addEventListener('change', syncTrip); $('tripOw').addEventListener('change', syncTrip); $('tripMulti').addEventListener('change', syncTrip);
   ['adults', 'children', 'infants'].forEach(function (id) { $(id).addEventListener('change', syncPrice); });
