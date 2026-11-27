@@ -28,6 +28,11 @@ const vlog = (...a) => { if (VERBOSE) console.log(...a); };
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
 
 const BASE = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
+const runcache = require('./lib/runcache');
+// A job searches a batch of users from the same runner (one IP address). Google blocks an address after about 50
+// searches, so the job's Google budget (googleMaxPerJob) is split between the batch: BATCH_SIZE users.
+const BATCH_SIZE = Math.max(1, Number(process.env.BATCH_SIZE) || 1);
+BASE.googleMaxSearches = Math.max(1, Math.min(BASE.googleMaxSearches || 10, Math.floor((BASE.googleMaxPerJob || 40) / BATCH_SIZE)));
 // Default profile for unit tests (require('./watch.js')).
 const codec = require('./docs/codec.js');
 const TEST_PREFS = { origin: 'AAA', destination: 'BBB', airline: 'LY', outMaxStops: 0, outFrom: '2030-12-16', outTo: '2030-12-30',
@@ -182,7 +187,7 @@ function writeLogs(outcome, offersCount, startedMs) {
   const dir = path.join(__dirname, 'logs');
   logMessages(MESSAGES.map((m) => ({ ...m, user: USER_ID, sender: 'search' })), dir);
   appendCsv(path.join(dir, 'searches.csv'), ['time_utc', 'run', 'user', 'mode', 'source', 'market', 'kind', 'status', 'attempts', 'seconds', 'results', 'error'],
-    SEARCH_LOG.filter((x) => x.status !== 'ok' && x.status !== 'skipped').map((x) => [at, run, USER_ID, mode, x.source, x.market, x.kind, x.status, x.attempts, x.sec, x.results, x.error]));
+    SEARCH_LOG.filter((x) => !['ok', 'skipped', 'cached'].includes(x.status)).map((x) => [at, run, USER_ID, mode, x.source, x.market, x.kind, x.status, x.attempts, x.sec, x.results, x.error]));
   const n = (src, st) => SEARCH_LOG.filter((x) => x.source === src && (Array.isArray(st) ? st.includes(x.status) : x.status === st)).length;
   const per = (src) => [n(src, ['ok', 'ok-after-retry']), n(src, 'failed'), n(src, 'blocked'), n(src, 'skipped')];
   appendCsv(path.join(dir, 'runs.csv'), ['time_utc', 'run', 'user', 'mode', 'seconds', 'kayak_ok', 'kayak_failed', 'kayak_blocked', 'kayak_skipped',
@@ -233,6 +238,8 @@ const pairOk = (outDate, retDate) => !CONFIG.maxTripDays || retDate <= addDays(o
 // Offers that may be shown and alerted: bags included, or not known (marked "*").
 const bagReq = (o) => bagState(o) !== 'no';
 const bagUnknown = (c) => c.offers.some((o) => bagState(o) === 'unknown');
+// Prices that may be out of date (Aviasales cache) are shown but do not alert on their own.
+const canAlert = (c) => !c.offers.some((o) => o.noAlert);
 
 // ---------- Kayak ----------
 // Kayak's stops filter: "stops=0,1" = nonstop or 1 stop. ("stops=~1" means exactly 1 stop; checked 8.11.)
@@ -418,9 +425,24 @@ function kiwiPush(results, sc, kind, extra) {
     });
   }
 }
+// Kiwi searches go through the job's shared cache (lib/runcache.js): a second user of the batch with the same
+// query (same route, dates, passengers and filters) gets the saved answer and costs no call.
+// Per-user quota: at most kiwiMaxCallsPerUserRun real calls per run (a 5-flight trip with preferred airlines
+// could otherwise send dozens). Calls over the quota are logged as skipped.
+let KIWI_CALLS = 0;
+let CACHE_HITS = 0;
+async function kiwiQuery(kind, req) {
+  const hit = runcache.get('kiwi', req, BASE.cacheMinutes || 90);
+  if (hit !== undefined) { CACHE_HITS++; logSearch('kiwi', 'mcp.kiwi.com', kind, 'cached', 0, 0, (hit.itineraries || []).length); return hit; }
+  if (KIWI_CALLS >= (BASE.kiwiMaxCallsPerUserRun || 15)) { logSearch('kiwi', 'mcp.kiwi.com', kind, 'skipped', 0, 0, 0, 'per-user quota'); return { itineraries: [] }; }
+  KIWI_CALLS++;
+  const sc = await tracked('kiwi', 'mcp.kiwi.com', kind, () => kiwiCall(req), 5000, (r) => (r.itineraries || []).length);
+  runcache.put('kiwi', req, sc);
+  return sc;
+}
 async function searchKiwi() {
   const results = []; const errors = [];
-  const call = (kind, a, extra) => tracked('kiwi', 'mcp.kiwi.com', kind, () => kiwiCall({ ...kiwiCommon(), ...a }), 5000, (sc) => (sc.itineraries || []).length)
+  const call = (kind, a, extra) => kiwiQuery(kind, { ...kiwiCommon(), ...a })
     .then((sc) => kiwiPush(results, sc, kind, extra))
     .catch((e) => errors.push(`kiwi.com ${kind}: ${e.message}`));
   const outArgs = { flyFrom: CONFIG.origin, flyTo: CONFIG.destination, departureDate: dmy(OUT.from), departureDateTo: dmy(OUT.to),
@@ -550,18 +572,99 @@ async function googleSearch(browser, gm, task) {
   } finally { await ctx.close(); }
 }
 const GOOGLE_BLOCKED = new Set(); // a Google market that blocked us is not tried again in this run (a trip's later flights)
+// After Google blocks a search (anywhere: the block is in logs/searches.csv, which every job reads), Google is not
+// searched for googleBackoffHours (48) for any user. Trying again soon only keeps the block going.
+function googleBackoffUntil(now = Date.now(), dir) {
+  const hours = BASE.googleBackoffHours ?? 48;
+  if (!hours) return null;
+  const rows = require('./lib/logs').readCsv('searches.csv', dir).filter((r) => r.source === 'google' && r.status === 'blocked');
+  const inJob = runcache.flag('google-blocked'); // a block earlier in this job, not yet in the log
+  const last = [...rows.map((r) => r.time_utc), inJob].filter(Boolean).sort().pop();
+  if (!last) return null;
+  const until = new Date(last).getTime() + hours * 36e5;
+  return until > now ? new Date(until) : null;
+}
 async function searchGoogle(browser, gm, tasks) {
   const results = []; const errors = [];
   let failedInARow = 0;
-  if (GOOGLE_BLOCKED.has(gm.gl)) { tasks.forEach((t) => logSearch('google', `google ${gm.gl}`, t.kind, 'skipped', 0, 0, 0, 'site blocked earlier in this run')); return { results, errors }; }
-  for (const t of tasks) {
+  const skipAll = (from, why) => tasks.slice(from).forEach((t) => logSearch('google', `google ${gm.gl}`, t.kind, 'skipped', 0, 0, 0, why));
+  if (GOOGLE_BLOCKED.has(gm.gl)) { skipAll(0, 'site blocked earlier in this run'); return { results, errors }; }
+  const backoff = googleBackoffUntil();
+  if (backoff) { skipAll(0, 'backoff after a block'); console.log(`google: paused after a block, until ${backoff.toISOString().slice(0, 13)}h UTC`); return { results, errors }; }
+  const jobMax = BASE.googleMaxPerJob || 40; // searches from this runner's address, all users of the batch together
+  for (let i = 0; i < tasks.length; i++) {
+    const t = tasks[i];
     if (failedInARow >= 2) { errors.push(`${gm.label}: stopped after 2 failed searches in a row`); break; }
-    try { results.push(...await tracked('google', `google ${gm.gl}`, t.kind, () => googleSearch(browser, gm, t), 10000)); failedInARow = 0; } catch (e) {
-      if (e.blocked) { GOOGLE_BLOCKED.add(gm.gl); errors.push(`${gm.label}: blocked`); break; }
+    const url = googleUrl(t, gm.gl);
+    const hit = runcache.get('google', url, BASE.cacheMinutes || 90);
+    if (hit !== undefined) { CACHE_HITS++; logSearch('google', `google ${gm.gl}`, t.kind, 'cached', 0, 0, hit.length); results.push(...hit.map((o) => ({ ...o, source: gm.label }))); continue; }
+    if (runcache.count('google') >= jobMax) { skipAll(i, 'job budget'); console.log(`google: the job's budget of ${jobMax} searches is used up`); break; }
+    runcache.add('google');
+    try {
+      const r = await tracked('google', `google ${gm.gl}`, t.kind, () => googleSearch(browser, gm, t), 10000);
+      runcache.put('google', url, r); results.push(...r); failedInARow = 0;
+    } catch (e) {
+      if (e.blocked) { GOOGLE_BLOCKED.add(gm.gl); runcache.flag('google-blocked', new Date().toISOString()); errors.push(`${gm.label}: blocked`); skipAll(i + 1, 'site blocked earlier in this run'); break; }
       failedInARow++; errors.push(`${gm.label} ${t.kind} ${t.a}: ${e.message.split('\n')[0].slice(0, 120)}`);
     }
     await sleep(2500);
   }
+  return { results, errors };
+}
+
+// ---------- Aviasales Data API (Travelpayouts; free with a token, optional TRAVELPAYOUTS_TOKEN) ----------
+// Prices other Aviasales users found in the last 48 hours (not a live search), up to 600 calls a minute.
+// Good for many routes worldwide at no cost; the prices can be out of date, so by default they are shown in the
+// summary but never alert on their own (travelpayoutsAlerts). Bags are unknown ("*"). Economy only.
+// With TRAVELPAYOUTS_MARKER the links carry the affiliate marker (Travelpayouts pays per booking).
+const monthsIn = (from, to) => [...new Set(dateRange(from, to).map((d) => d.slice(0, 7)))];
+async function tpCall(params) {
+  const token = (process.env.TRAVELPAYOUTS_TOKEN || '').trim();
+  const u = new URL('https://api.travelpayouts.com/aviasales/v3/prices_for_dates');
+  for (const [k, v] of Object.entries({ ...params, currency: 'usd', sorting: 'price', limit: 1000 })) u.searchParams.set(k, String(v));
+  const res = await fetch(u, { headers: { 'x-access-token': token, accept: 'application/json' }, signal: AbortSignal.timeout(30000) });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const j = await res.json();
+  if (j.success === false) throw new Error(`api error ${scrub(j.error)}`);
+  return j.data || [];
+}
+function tpLeg(at, transfers, minutes, airline) {
+  return { date: at.slice(0, 10), time: at.slice(11, 16), stops: transfers ?? undefined, hours: minutes ? minutes / 60 : null,
+    carriers: airline ? [airline] : [], airline: heAirline(AIRLINE_HE[airline] || airline || '') };
+}
+function tpLink(link) {
+  if (!link) return null;
+  const u = new URL(link, 'https://www.aviasales.com');
+  const marker = (process.env.TRAVELPAYOUTS_MARKER || '').trim();
+  if (marker) u.searchParams.set('marker', marker);
+  return u.toString();
+}
+// One API item -> an offer in the same shape as the other sources (price per passenger, in USD).
+function tpOffer(it, kind) {
+  const legs = [tpLeg(it.departure_at, it.transfers, it.duration_to || (kind === 'rt' ? null : it.duration), it.airline)];
+  if (kind === 'rt') { if (!it.return_at) return null; legs.push(tpLeg(it.return_at, it.return_transfers, it.duration_back, it.airline)); }
+  return { kind, legs, price: Number(it.price), currency: 'USD', source: 'Aviasales (מחיר מהמטמון)', bags: [], url: tpLink(it.link),
+    airlines: [legs[0].airline], noAlert: !BASE.travelpayoutsAlerts };
+}
+async function searchTravelpayouts() {
+  const results = []; const errors = [];
+  if (!(process.env.TRAVELPAYOUTS_TOKEN || '').trim() || BASE.travelpayouts === false || CONFIG.cabin !== 'economy') return { results, errors };
+  const q = async (kind, params) => {
+    try {
+      const { value, hit } = await runcache.cached('tp', params, () => tracked('travelpayouts', 'api.travelpayouts.com', kind, () => tpCall(params), 5000), BASE.cacheMinutes || 90);
+      if (hit) CACHE_HITS++;
+      results.push(...value.map((it) => tpOffer(it, kind)).filter(Boolean));
+    } catch (e) { errors.push(`travelpayouts ${kind}: ${e.message}`); }
+  };
+  const direct = (R) => (R.maxStops === 0 ? { direct: true } : {});
+  const jobs = monthsIn(OUT.from, OUT.to).map((m) => () => q('out', { origin: CONFIG.origin, destination: CONFIG.destination, departure_at: m, one_way: true, ...direct(OUT) }));
+  if (RET) {
+    jobs.push(...monthsIn(RET.from, RET.to).map((m) => () => q('ret', { origin: CONFIG.destination, destination: CONFIG.origin, departure_at: m, one_way: true, ...direct(RET) })));
+    for (const a of monthsIn(OUT.from, OUT.to)) for (const b of monthsIn(RET.from, RET.to)) {
+      jobs.push(() => q('rt', { origin: CONFIG.origin, destination: CONFIG.destination, departure_at: a, return_at: b, one_way: false, ...(OUT.maxStops === 0 && RET.maxStops === 0 ? { direct: true } : {}) }));
+    }
+  }
+  await Promise.all(jobs.slice(0, 8).map((f) => f())); // a 5-month range is at most a few calls; never more than 8
   return { results, errors };
 }
 
@@ -778,9 +881,9 @@ async function searchAll(browser, state, now, rates) {
 
   // Kayak: every market x every task, a few pages at a time.
   // Wide date ranges: each run checks a different slice of the Kayak windows (Kiwi always covers everything).
-  const tasks = kayakTasks(state.kayakTurn);
-  console.log(`kayak tasks per market: ${tasks.length}`);
-  const kayakJob = (async () => {
+  const tasks = CONFIG.kayak === false ? [] : kayakTasks(state.kayakTurn);
+  if (tasks.length) console.log(`kayak tasks per market: ${tasks.length}`);
+  const kayakJob = CONFIG.kayak === false ? Promise.resolve({ results: [], errors: [] }) : (async () => {
     const jobs = CONFIG.markets.flatMap((m) => tasks.map((t) => ({ m, t })));
     const blockedHosts = KAYAK_BLOCKED; // after a block, the rest of that site's searches in this run are skipped
     const res = await pool(jobs, CONFIG.concurrency || 6, async ({ m, t }) => {
@@ -808,7 +911,8 @@ async function searchAll(browser, state, now, rates) {
   if (duffelDue) state.lastDuffelAt = now.toISOString();
   const duffelJob = duffelDue ? searchDuffel(outDates) : Promise.resolve({ results: [], errors: [] });
 
-  const parts = await Promise.all([timed('kayak', kayakJob), timed('kiwi', kiwiJob), timed('google', googleJob), timed('duffel', duffelJob)]);
+  const tpJob = searchTravelpayouts();
+  const parts = await Promise.all([timed('kayak', kayakJob), timed('kiwi', kiwiJob), timed('google', googleJob), timed('duffel', duffelJob), timed('travelpayouts', tpJob)]);
 
   const errors = parts.flatMap((p) => p.errors);
   const valid = (list) => list
@@ -920,7 +1024,7 @@ async function mainTrip({ browser, state, now, rates, forceSummary, firstSearch,
     errors.push(...r.errors.map((e) => `leg${i + 1} ${e}`));
     const { top, bestBag } = candidates(r.offers);
     const ok = top.filter((c) => c.offers.every(bagReq));
-    const under = ok.filter((c) => c.usd <= CONFIG.maxPriceUsd);
+    const under = ok.filter((c) => c.usd <= CONFIG.maxPriceUsd && canAlert(c));
     const alert = legShouldAlert(under, ls.lastAlert, now, TEST);
     if (alert && !TEST) ls.lastAlert = { at: now.toISOString(), usd: under[0].usd };
     ls.bestUsd = bestBag ? Math.round(bestBag.usd) : null;
@@ -1039,7 +1143,7 @@ async function main() {
   const errKinds = new Map();
   for (const e of errors) { const k = e.replace(/https?:\/\/\S+/g, '<link>').replace(/\d{4}-\d{2}-\d{2}/g, '<date>').slice(0, 140); errKinds.set(k, (errKinds.get(k) || 0) + 1); }
   for (const [k, n] of errKinds) console.log(`error x${n}: ${k}`);
-  console.log(`valid offers: ${offers.length}; combinations: ${cands.length}; errors: ${errors.length}`);
+  console.log(`valid offers: ${offers.length}; combinations: ${cands.length}; errors: ${errors.length}; cache hits: ${CACHE_HITS}`);
   top.slice(0, 8).forEach((c) => vlog(c.kind, c.out, '->', c.ret, fmtUsd(c.usd), c.offers.map((o) => `${o.source} ${fmtUsd(o.usd)}`).join(' + ')));
 
   state.lastRun = { at: now.toISOString(), ok: !!best, bestUsd: bestBag ? Math.round(bestBag.usd) : null, errors: errors.length };
@@ -1054,7 +1158,7 @@ async function main() {
     return;
   }
 
-  const under = top.filter((c) => c.usd <= CONFIG.maxPriceUsd && c.offers.every(bagReq));
+  const under = top.filter((c) => c.usd <= CONFIG.maxPriceUsd && c.offers.every(bagReq) && canAlert(c));
   const last = state.lastAlert;
   const hoursSince = last ? (now - new Date(last.at)) / 36e5 : Infinity;
   const TEST = process.env.TEST_ALERT === '1'; // test runs always alert and do not touch the real alert history
@@ -1124,4 +1228,4 @@ if (require.main === module) {
     process.exit(1);
   });
 }
-module.exports = { useProfile, candidates, tripLegText, tripTotal, legShouldAlert, legSig, israelClock, preferredFirst, optionsText, flies, scrub, tracked, appendCsv, googleTfs, googleUrl, parseGoogleLabel, googleTasks, lowCostLinks, retryOnce, bagState, configFor, slotFrom, bagReq, bagOk, kayakUrlForTest: kayakUrl, pickDiverse, tripType, setIlsRate: (r) => { ILS_PER_USD = r; }, pairOk, legOkOut, legOkRet, parseKayakCards, candText, pickDistinct, searchCenters };
+module.exports = { googleBackoffUntil, tpOffer, kiwiQuery, canAlert, searchGoogle, useProfile, candidates, tripLegText, tripTotal, legShouldAlert, legSig, israelClock, preferredFirst, optionsText, flies, scrub, tracked, appendCsv, googleTfs, googleUrl, parseGoogleLabel, googleTasks, lowCostLinks, retryOnce, bagState, configFor, slotFrom, bagReq, bagOk, kayakUrlForTest: kayakUrl, pickDiverse, tripType, setIlsRate: (r) => { ILS_PER_USD = r; }, pairOk, legOkOut, legOkRet, parseKayakCards, candText, pickDistinct, searchCenters };

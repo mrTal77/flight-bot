@@ -45,5 +45,13 @@
         "AM"
       ]
     }
-  }
+  },
+  "kayak": false,
+  "googleMaxPerJob": 40,
+  "googleBackoffHours": 48,
+  "kiwiMaxCallsPerUserRun": 15,
+  "usersPerJob": 4,
+  "cacheMinutes": 90,
+  "travelpayouts": true,
+  "travelpayoutsAlerts": false
 }

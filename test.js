@@ -361,3 +361,62 @@ console.log('kayak filter test passed');
   assert.equal(bot.isPaused({ id: 'u0000000001' }), false);
   console.log('trip bot tests passed');
 }
+
+// Scaling: batches by route, the job's shared cache, per-user Kiwi quota, Google job budget and 48h backoff,
+// Aviasales (Travelpayouts) offers.
+(async () => {
+  const fs = require('fs'); const os = require('os'); const px = require('path');
+  process.env.RUN_CACHE_DIR = fs.mkdtempSync(px.join(os.tmpdir(), 'fb-cache-'));
+  const RC = require('./lib/runcache');
+  const LU = require('./lib/list-users');
+  const W = require('./watch.js');
+  W.useProfile({ origin: 'AAA', destination: 'BBB', airline: '', outMaxStops: 1, outFrom: '2030-12-16', outTo: '2030-12-30', oneWay: true, maxPrice: 900, checkedBags: 0, carryOn: 0 });
+
+  // batches: same route together, at most `size` per batch
+  const u = (id, o, d) => ({ id, prefs: { origin: o, destination: d, oneWay: false } });
+  assert.deepEqual(LU.batches([u('u1', 'TLV', 'ATH'), u('u2', 'TLV', 'BKK'), u('u3', 'TLV', 'ATH'), u('u4', 'JFK', 'LHR'), u('u5', 'TLV', 'ATH')], 2),
+    ['u4 u1', 'u3 u5', 'u2']);
+  assert.deepEqual(LU.pick([u('u1'), u('u2')], '', '', new Set(['u2'])).map((x) => x.id), ['u1'], 'paused users are left out');
+
+  // runcache
+  assert.equal(RC.get('x', { a: 1 }), undefined);
+  RC.put('x', { a: 1 }, [1, 2]);
+  assert.deepEqual(RC.get('x', { a: 1 }), [1, 2]);
+  assert.equal(RC.get('x', { a: 1 }, -1), undefined, 'too old');
+  let calls = 0;
+  const r1 = await RC.cached('y', 'k', async () => { calls++; return 5; });
+  const r2 = await RC.cached('y', 'k', async () => { calls++; return 6; });
+  assert.deepEqual([r1, r2, calls], [{ value: 5, hit: false }, { value: 5, hit: true }, 1]);
+  assert.equal(RC.add('c'), 1); assert.equal(RC.add('c', 2), 3); assert.equal(RC.count('c'), 3);
+
+  // Kiwi: the second identical query comes from the cache; calls over the per-user quota are skipped
+  const realFetch = global.fetch; let kiwiCalls = 0;
+  global.fetch = async () => { kiwiCalls++; return { ok: true, text: async () => 'data: ' + JSON.stringify({ result: { structuredContent: { itineraries: [] } } }) }; };
+  await W.kiwiQuery('out', { q: 1 }); await W.kiwiQuery('out', { q: 1 });
+  assert.equal(kiwiCalls, 1, 'second identical Kiwi query is cached');
+  for (let i = 0; i < 20; i++) await W.kiwiQuery('out', { q: 100 + i });
+  assert.equal(kiwiCalls, 15, 'at most kiwiMaxCallsPerUserRun real calls');
+  global.fetch = realFetch;
+
+  // Google: 48h backoff after a block in the log; nothing is searched (no browser needed) while it lasts
+  const logDir = fs.mkdtempSync(px.join(os.tmpdir(), 'fb-logs-'));
+  fs.writeFileSync(px.join(logDir, 'searches.csv'), 'time_utc,run,user,mode,source,market,kind,status\n2030-01-01T10:00:00Z,1,u1,summary,google,google IL,rt,blocked\n2030-01-01T11:00:00Z,1,u1,summary,kiwi,x,rt,failed\n');
+  assert.equal(W.googleBackoffUntil(Date.parse('2030-01-02T10:00:00Z'), logDir).toISOString(), '2030-01-03T10:00:00.000Z');
+  assert.equal(W.googleBackoffUntil(Date.parse('2030-01-03T10:00:01Z'), logDir), null, 'over after 48h');
+  // Google: the job's budget (40) is shared by its users; a cached search costs nothing
+  RC.add('google', 40);
+  const g = await W.searchGoogle(null, { gl: 'IL', label: 'Google' }, [{ kind: 'out', a: '2030-12-20' }]);
+  assert.deepEqual([g.results.length, g.errors.length], [0, 0], 'over budget: skipped, no browser used');
+
+  // Aviasales cached prices: shown in the regular shape, never alert on their own
+  const one = W.tpOffer({ departure_at: '2030-12-20T10:35:00+02:00', transfers: 0, duration_to: 150, airline: 'LY', price: 210, link: '/search/AAA2012BBB1?t=x' }, 'out');
+  assert.deepEqual([one.legs[0].date, one.legs[0].time, one.legs[0].stops, one.legs[0].hours, one.legs[0].airline, one.price, one.url.startsWith('https://www.aviasales.com/search/AAA2012BBB1')],
+    ['2030-12-20', '10:35', 0, 2.5, 'אל על', 210, true]);
+  assert.equal(W.legOkOut(one.legs[0]), true);
+  assert.equal(W.canAlert({ offers: [one] }), false);
+  assert.equal(W.canAlert({ offers: [{ source: 'kiwi.com' }] }), true);
+  const rt = W.tpOffer({ departure_at: '2030-12-20T10:35:00+02:00', return_at: '2031-01-12T22:00:00+02:00', transfers: 1, return_transfers: 0, duration_to: 300, duration_back: 200, airline: 'A3', price: 400, link: '/x' }, 'rt');
+  assert.deepEqual(rt.legs.map((l) => l.date), ['2030-12-20', '2031-01-12']);
+  assert.equal(W.tpOffer({ departure_at: '2030-12-20T10:35:00+02:00', price: 1 }, 'rt'), null, 'a round trip needs a return');
+  console.log('scaling tests passed');
+})().catch((e) => { console.error(e); process.exit(1); });
