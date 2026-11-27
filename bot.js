@@ -63,6 +63,12 @@ const TX = {
     choose: 'מצאתי כמה אפשרויות. שלח את הפקודה של היעד שרצית:\n{a}',
     langSet: '✅ השפה עודכנה לעברית.',
     unknown: 'לא הבנתי. הנה מה שאפשר לעשות:',
+    tripHelp: '<b>במסע:</b> <code>/price 2 400</code> · סף חדש לטיסה 2 (<code>/price 400</code> משנה את כל הטיסות). תאריכים ויעדים משנים דרך /edit.',
+    tripEdit: 'במסע משנים תאריכים ויעדים דרך הטופס: /edit',
+    tripPriceUsage: 'כך משנים מחיר במסע: <code>/price 2 400</code> (טיסה 2, בדולרים לנוסע), או <code>/price 400</code> לכל הטיסות.',
+    noLeg: 'אין במסע טיסה מספר {a}.',
+    bestLeg: '💰 הזול ביותר בבדיקה האחרונה:',
+    paused: '⏸️ החיפוש שלך מושהה כרגע, ולא יישלחו התראות או סיכומים. ההגדרות שלך שמורות.',
   },
   en: {
     help: [
@@ -98,12 +104,29 @@ const TX = {
     choose: 'I found several options. Send the command of the one you want:\n{a}',
     langSet: '✅ Language set to English.',
     unknown: 'I did not understand. Here is what you can do:',
+    tripHelp: '<b>In a trip:</b> <code>/price 2 400</code> · new limit for flight 2 (<code>/price 400</code> changes every flight). Change dates and places with /edit.',
+    tripEdit: 'In a trip, change dates and places in the form: /edit',
+    tripPriceUsage: 'To change a price in a trip: <code>/price 2 400</code> (flight 2, USD per passenger), or <code>/price 400</code> for every flight.',
+    noLeg: 'There is no flight number {a} in your trip.',
+    bestLeg: '💰 Best prices in the last check:',
+    paused: '⏸️ Your search is paused right now: no alerts or summaries. Your settings are saved.',
   },
 };
 const tx = (lang, key, a) => (TX[lang === 'en' ? 'en' : 'he'][key] || '').split('{a}').join(a == null ? '' : a);
 const prefsText = (p) => codec.describe(p, p.lang || 'he').join('\n');
-const routeOf = (p) => `${codec.placeName(p.origin)} ${p.oneWay ? '→' : '⇄'} ${codec.placeName(p.destination)}`;
+function routeOf(p) {
+  if (!codec.isTrip(p)) return `${codec.placeName(p.origin)} ${p.oneWay ? '→' : '⇄'} ${codec.placeName(p.destination)}`;
+  const parts = [codec.placeName(p.legs[0].origin)]; // a flight that does not start where the last one landed: its origin in brackets
+  p.legs.forEach((l, i) => { if (i && l.origin !== p.legs[i - 1].destination) parts.push(`(${codec.placeName(l.origin)})`); parts.push(codec.placeName(l.destination)); });
+  return `מסע: ${parts.join(' → ')}`;
+}
+// Users the owner paused (config.json "pausedUsers"): their data stays, but nothing is searched or sent.
+const isPaused = (u) => !!u && (CONFIG.pausedUsers || []).includes(u.id);
 function userLine(u) { // one short line about a user's search, for the owner (Hebrew)
+  if (codec.isTrip(u.prefs)) {
+    const t = u.prefs; const legs = t.legs.map((_, i) => codec.legPrefs(t, i));
+    return `🧳 ${routeOf(t)} · ${legs.length} טיסות · ${d(legs[0].outFrom)}–${d(legs[legs.length - 1].outTo)} · ספים ${legs.map((l) => `$${l.maxPrice.toLocaleString('en-US')}`).join('/')}`;
+  }
   const p = codec.withDefaults(u.prefs);
   const pax = p.adults + p.children + p.infants;
   const dates = p.oneWay ? d(p.outFrom) : `${d(p.outFrom)} → ${d(p.retFrom)}`;
@@ -218,9 +241,13 @@ async function saveChange(db, user, newPrefs, todayIso, toDispatch, resetSearch)
   user.prefs = newPrefs; user.updatedAt = new Date().toISOString();
   db.users[user.id] = user;
   if (resetSearch) store.deleteState(user.id);
-  else { const st = store.loadState(user.id); delete st.lastAlert; store.saveState(user.id, st); } // new price: may alert again
-  toDispatch.push(user.id);
-  await reply(user.chatId, `${tx(lang, 'updated')}\n\n${prefsText(newPrefs)}\n\n${tx(lang, 'firstSearch')}`);
+  else { // new price: may alert again
+    const st = store.loadState(user.id); delete st.lastAlert;
+    (st.legs || []).forEach((l) => { if (l) delete l.lastAlert; });
+    store.saveState(user.id, st);
+  }
+  if (!isPaused(user)) toDispatch.push(user.id);
+  await reply(user.chatId, `${tx(lang, 'updated')}\n\n${prefsText(newPrefs)}\n\n${isPaused(user) ? tx(lang, 'paused') : tx(lang, 'firstSearch')}`);
   if (!user.owner) await notifyOwner(`✏️ <b>משתמש עדכן הגדרות</b>: ${esc(user.name) || 'ללא שם'}\n${userLine(user)}`);
 }
 
@@ -232,10 +259,10 @@ async function handle(db, msg, todayIso, toDispatch) {
   const existing = Object.values(db.users).find((u) => u.chatId === chatId); // one user per chat
   const tgLang = msg.from && msg.from.language_code;
   const lang = existing ? (existing.prefs.lang || 'he') : (!tgLang || /^(he|iw)/.test(tgLang) ? 'he' : 'en');
-  const help = (u, L) => tx(L, 'help') + (u && u.owner ? '\n' + tx(L, 'ownerHelp') : '');
+  const help = (u, L) => tx(L, 'help') + (u && codec.isTrip(u.prefs) ? '\n\n' + tx(L, 'tripHelp') : '') + (u && u.owner ? '\n' + tx(L, 'ownerHelp') : '');
 
   // The sign-up code arrives as "/start CODE" (Start button) or pasted as "/start CODE" / "CODE" by hand.
-  const pasted = /^[A-Za-z0-9_-]{20,64}$/.test(text) ? text : null;
+  const pasted = new RegExp(`^[A-Za-z0-9_-]{20,${codec.MAX_CODE}}$`).test(text) ? text : null; // a long trip code is pasted
   const c = pasted ? { cmd: 'start', arg: pasted } : parseCommand(text);
   CURRENT = { type: c ? c.cmd : 'other', user: existing ? existing.id : '-' };
 
@@ -260,9 +287,10 @@ async function handle(db, msg, todayIso, toDispatch) {
     db.users[user.id] = user;
     if (existing) store.deleteState(user.id); // new settings: start fresh
     CURRENT.user = user.id; CURRENT.type = existing ? 'update' : 'signup';
-    toDispatch.push(user.id);
-    if (!user.owner) await notifyOwner(`👤 <b>${existing ? 'משתמש עדכן הגדרות' : 'משתמש חדש נרשם'}</b>: ${esc(user.name) || 'ללא שם'}\n${userLine(user)}\nסה״כ משתמשים: ${Object.keys(db.users).length}`);
-    await reply(chatId, `${existing ? tx(L, 'updated') : tx(L, 'registered')}\n\n${prefsText(prefs)}\n\n${tx(L, 'firstSearch')}\n\n${help(user, L)}`);
+    const paused = isPaused(user);
+    if (!paused) toDispatch.push(user.id);
+    if (!user.owner) await notifyOwner(`👤 <b>${existing ? 'משתמש עדכן הגדרות' : 'משתמש חדש נרשם'}</b>: ${esc(user.name) || 'ללא שם'}${paused ? ' (מושהה: כדי להפעיל אותו מחדש, להוציא אותו מ-pausedUsers ב-config.json)' : ''}\n${userLine(user)}\nסה״כ משתמשים: ${Object.keys(db.users).length}`);
+    await reply(chatId, `${existing ? tx(L, 'updated') : tx(L, 'registered')}\n\n${prefsText(prefs)}\n\n${paused ? tx(L, 'paused') : tx(L, 'firstSearch')}\n\n${help(user, L)}`);
     return;
   }
 
@@ -278,9 +306,9 @@ async function handle(db, msg, todayIso, toDispatch) {
     if (!list.length) { await reply(chatId, 'אין משתמשים רשומים כרגע.'); return; }
     const rows = list.map((u, i) => {
       const st = store.loadState(u.id);
-      const best = st.lastRun && st.lastRun.bestUsd ? `$${st.lastRun.bestUsd.toLocaleString('en-US')}` : 'עוד אין';
+      const best = st.lastRun && st.lastRun.bestUsd ? `$${st.lastRun.bestUsd.toLocaleString('en-US')}${codec.isTrip(u.prefs) ? ' (כל המסע)' : ''}` : 'עוד אין';
       const last = st.lastRun ? d(st.lastRun.at.slice(0, 10)) : '—';
-      return `${i + 1}. <b>${esc(u.name) || 'ללא שם'}</b>${u.owner ? ' (אתה)' : ''} · נרשם ${d(u.createdAt.slice(0, 10))}\n${userLine(u)}\n💰 הזול ביותר: ${best} · בדיקה אחרונה: ${last}`;
+      return `${i + 1}. <b>${esc(u.name) || 'ללא שם'}</b>${u.owner ? ' (אתה)' : ''}${isPaused(u) ? ' ⏸️ מושהה' : ''} · נרשם ${d(u.createdAt.slice(0, 10))}\n${userLine(u)}\n💰 הזול ביותר: ${best} · בדיקה אחרונה: ${last}`;
     });
     await reply(chatId, `👥 <b>${list.length} משתמשים</b> (מקסימום ${CONFIG.maxUsers})\n\n${rows.join('\n\n')}`);
     return;
@@ -288,7 +316,8 @@ async function handle(db, msg, todayIso, toDispatch) {
 
   if (!existing) { await reply(chatId, tx(lang, 'notRegistered')); return; }
   const u = existing;
-  const p = codec.withDefaults(u.prefs);
+  const trip = codec.isTrip(u.prefs);
+  const p = trip ? u.prefs : codec.withDefaults(u.prefs);
 
   switch (c && c.cmd) {
     case 'stop': {
@@ -300,8 +329,12 @@ async function handle(db, msg, todayIso, toDispatch) {
     }
     case 'status': {
       const st = store.loadState(u.id);
-      const best = st.lastRun && st.lastRun.bestUsd ? tx(lang, 'best', st.lastRun.bestUsd.toLocaleString('en-US')) : tx(lang, 'noRunYet');
-      await reply(chatId, `${prefsText(u.prefs)}\n\n${best}\n\n/edit · /price · /dest · /out · /back`);
+      let best;
+      if (trip) {
+        const legs = st.legs || [];
+        best = st.lastRun ? [tx(lang, 'bestLeg'), ...u.prefs.legs.map((_, i) => `${i + 1}. ${legs[i] && legs[i].bestUsd ? `$${legs[i].bestUsd.toLocaleString('en-US')}` : '—'}`)].join('\n') : tx(lang, 'noRunYet');
+      } else best = st.lastRun && st.lastRun.bestUsd ? tx(lang, 'best', st.lastRun.bestUsd.toLocaleString('en-US')) : tx(lang, 'noRunYet');
+      await reply(chatId, `${prefsText(u.prefs)}\n\n${best}${isPaused(u) ? `\n\n${tx(lang, 'paused')}` : ''}\n\n${trip ? '/edit · /price' : '/edit · /price · /dest · /out · /back'}`);
       return;
     }
     case 'edit': {
@@ -316,12 +349,22 @@ async function handle(db, msg, todayIso, toDispatch) {
       return;
     }
     case 'price': {
+      if (trip) { // "/price 2 400" = flight 2; "/price 400" = every flight
+        const m = (c.arg || '').replace(/[$,]/g, '').trim().match(/^(?:(\d)\s+)?(\d+(?:\.\d+)?)$/);
+        if (!m) { await reply(chatId, tx(lang, 'tripPriceUsage')); return; }
+        const leg = m[1] ? Number(m[1]) : 0; const price = Math.round(Number(m[2]));
+        if (m[1] && (leg < 1 || leg > u.prefs.legs.length)) { await reply(chatId, tx(lang, 'noLeg', leg)); return; }
+        const legs = u.prefs.legs.map((l, i) => (!leg || i === leg - 1 ? { ...l, maxPrice: price } : l));
+        await saveChange(db, u, { ...u.prefs, legs }, todayIso, toDispatch, false);
+        return;
+      }
       const n = Number((c.arg || '').replace(/[$,\s]/g, ''));
       if (!c.arg || !Number.isFinite(n)) { await reply(chatId, tx(lang, 'priceUsage')); return; }
       await saveChange(db, u, { ...u.prefs, maxPrice: Math.round(n) }, todayIso, toDispatch, false);
       return;
     }
     case 'dest': {
+      if (trip) { await reply(chatId, tx(lang, 'tripEdit')); return; }
       if (!c.arg) { await reply(chatId, tx(lang, 'destUsage')); return; }
       const found = findPlaces(c.arg);
       if (!found.length) { await reply(chatId, tx(lang, 'notFound', esc(c.arg))); return; }
@@ -334,6 +377,7 @@ async function handle(db, msg, todayIso, toDispatch) {
     }
     case 'out':
     case 'back': {
+      if (trip) { await reply(chatId, tx(lang, 'tripEdit')); return; }
       if (c.cmd === 'back' && p.oneWay) { await reply(chatId, tx(lang, 'noReturn')); return; }
       const range = c.arg ? parseDates(c.arg, todayIso) : null;
       if (!range) { await reply(chatId, tx(lang, 'dateUsage', c.cmd)); return; }
@@ -374,6 +418,7 @@ async function main() {
   const updates = updatesFile ? JSON.parse(fs.readFileSync(updatesFile, 'utf8'))
     : await tg('getUpdates', { offset: (db.botOffset || 0) + 1, timeout: 0, allowed_updates: ['message'] });
   const menuSet = await setCommandMenu(db);
+  if (!DRY && !updatesFile) await require('./lib/clicks').pullClicks(); // link clicks -> logs/clicks.csv (CLICKS-SETUP.md)
   if (!updates.length) { if (menuSet) store.saveUsers(db); console.log('no new messages'); return; }
   const today = new Date().toISOString().slice(0, 10);
   const toDispatch = [];
@@ -411,4 +456,4 @@ async function startPending() {
 }
 
 if (require.main === module) (argv.includes('--start-searches') ? startPending() : argv.includes('--owner-start') ? ownerStart(argv[argv.indexOf('--owner-start') + 1] || '') : main()).catch((e) => { console.error('ERROR', e.message); process.exit(1); });
-module.exports = { prefsText, parseDates, parseDate, findPlaces, parseCommand, handle };
+module.exports = { prefsText, parseDates, parseDate, findPlaces, parseCommand, handle, routeOf, userLine, isPaused };

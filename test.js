@@ -19,6 +19,33 @@ const au = 'Go to result details\n16/01\n12:05 – 10:15+1\nBBB City\n-\nAAA Air
 const a = parseKayakCards(au, 'AUD')[0];
 assert.deepEqual([a.legs[0].date, a.legs[0].stops, Math.round(a.legs[0].hours*60), a.price, a.airline], ['2031-01-16',1,910,1127,'Air Canada']);
 console.log('all rule and parser tests passed');
+// Click tracking: links go through the Worker with a signature the Worker accepts; the counts land in logs/clicks.csv
+{
+  const C = require('./lib/clicks');
+  const L = require('./lib/logs');
+  const fs = require('fs'); const px = require('path');
+  const cfg = { url: 'https://clicks.example.workers.dev', secret: 's3cret' };
+  const msg = '<a href="https://www.kayak.com/flights/AAA-BBB/2031-01-01?sort=price_a&amp;fs=stops=0">Kayak</a> · <a href="https://wizzair.com/x">Wizz Air</a>';
+  const out = C.trackLinks(msg, 'u0000000001', 'alert', cfg);
+  const hrefs = [...out.matchAll(/href="([^"]+)"/g)].map((m) => new URL(m[1]));
+  assert.equal(hrefs.length, 2);
+  assert.equal(hrefs[0].origin + hrefs[0].pathname, 'https://clicks.example.workers.dev/c');
+  assert.equal(hrefs[0].searchParams.get('to'), 'https://www.kayak.com/flights/AAA-BBB/2031-01-01?sort=price_a&fs=stops=0');
+  assert.deepEqual(['u', 's', 't'].map((k) => hrefs[0].searchParams.get(k)), ['u0000000001', 'kayak', 'alert']);
+  assert.equal(hrefs[1].searchParams.get('s'), 'airline');
+  assert.equal(hrefs[0].searchParams.get('k'), C.sign('s3cret', `u0000000001|kayak|alert|${hrefs[0].searchParams.get('to')}`));
+  assert.equal(C.trackLinks(msg, 'u0000000001', 'alert', { url: '', secret: '' }), msg); // off until set up
+  const dir = fs.mkdtempSync(px.join(require('os').tmpdir(), 'clicks-'));
+  const today = new Date().toISOString().slice(0, 10);
+  C.mergeClicks({ [`${today}|u0000000001|kayak|alert`]: 2, [`${today}|u0000000002|google|summary`]: 1, bad: 5 }, dir);
+  C.mergeClicks({ [`${today}|u0000000001|kayak|alert`]: 3 }, dir);
+  const rows = L.readCsv('clicks.csv', dir);
+  assert.deepEqual(rows.map((r) => [r.user, r.site, r.clicks]), [['u0000000001', 'kayak', '3'], ['u0000000002', 'google', '1']]);
+  assert.ok(!fs.readFileSync(px.join(dir, 'clicks.csv'), 'utf8').includes('http'));
+  assert.equal(C.mergeClicks({ [`${today}|u0000000001|kayak|alert`]: 3 }, dir), 0); // nothing new: file untouched
+  console.log('click tracking tests passed');
+}
+
 
 // pickDiverse: one option per trip type first, then different outbound dates
 {
@@ -269,3 +296,134 @@ console.log('kayak filter test passed');
   assert.ok(sm.includes('✉️ הודעות שנשלחו: 4 · סיכומים 1 · התראות 1 · תשובות בצ׳אט 1'), sm);
   console.log('message log tests passed');
 }
+
+// Trips (several one-way flights): v5 code, validation, chat commands, per-flight alerts and the short summary
+{
+  const C = require('./docs/codec.js');
+  const trip = { trip: true, invite: 'Ab3_x9', lang: 'he', checkedBags: 0, carryOn: 1, legs: [
+    { origin: 'TLV', destination: 'BKK', adults: 1, outFrom: '2030-01-10', outTo: '2030-01-16', maxPrice: 450, outMaxStops: 1 },
+    { origin: 'BKK', destination: 'CNX', adults: 2, outFrom: '2030-01-20', outTo: '2030-01-22', maxPrice: 60, outMaxStops: 0, airline: 'FD' },
+    { origin: 'CNX', destination: 'NRT', adults: 2, outFrom: '2030-02-01', outTo: '2030-02-03', maxPrice: 300, outMaxStops: 1, outDepFrom: 6, outDepTo: 20, outMaxHours: 9 }] };
+  const code = C.encode(trip);
+  assert.ok(code.length <= C.TG_MAX, `3 flights fit in a Telegram link (${code.length})`);
+  const q = C.decode(code);
+  assert.equal(q.trip, true); assert.equal(q.legs.length, 3);
+  assert.deepEqual(q.legs.map((l) => [l.origin, l.destination, l.adults, l.outFrom, l.outTo, l.maxPrice, l.airline, l.outMaxStops]),
+    [['TLV', 'BKK', 1, '2030-01-10', '2030-01-16', 450, '', 1], ['BKK', 'CNX', 2, '2030-01-20', '2030-01-22', 60, 'FD', 0], ['CNX', 'NRT', 2, '2030-02-01', '2030-02-03', 300, '', 1]]);
+  assert.deepEqual([q.legs[2].outDepFrom, q.legs[2].outDepTo, q.legs[2].outMaxHours, q.checkedBags, q.carryOn], [6, 20, 9, 0, 1]);
+  assert.deepEqual(C.validate(q, '2029-12-01'), []);
+  const lp = C.legPrefs(q, 1);
+  assert.deepEqual([lp.oneWay, lp.origin, lp.adults, lp.checkedBags, lp.maxPrice], [true, 'BKK', 2, 0, 60]);
+  // five flights, different origins, passengers and prices: still decodes (a long code is pasted to the bot)
+  const L = (o, d, i) => ({ origin: o, destination: d, adults: 1 + (i % 3), children: i % 2, outFrom: `2030-0${i + 1}-01`, outTo: `2030-0${i + 1}-31`, maxPrice: 1000 + i, outMaxStops: 2, airline: 'LY', outMaxHours: 20, outDepFrom: 6, outDepTo: 22 });
+  const five = { trip: true, invite: 'Ab3_x9', lang: 'en', legs: [L('TLV', 'BKK', 0), L('LHR', 'CNX', 1), L('JFK', 'NRT', 2), L('CDG', 'MIA', 3), L('ATH', 'FCO', 4)] };
+  const fc = C.encode(five);
+  assert.ok(fc.length > C.TG_MAX && fc.length <= C.MAX_CODE);
+  assert.deepEqual(C.decode(fc).legs[4], { ...L('ATH', 'FCO', 4), infants: 0 });
+  // errors carry the flight number
+  const bad = { ...trip, legs: [trip.legs[0], { ...trip.legs[1], outFrom: '2030-01-05', outTo: '2030-01-05' }, { ...trip.legs[2], destination: 'CNX' }] };
+  const e = C.validate(bad, '2029-12-01');
+  assert.ok(e.some((x) => x.startsWith('טיסה 2:')) && e.some((x) => x.startsWith('טיסה 3:')), e.join(' | '));
+  assert.ok(C.validate({ ...trip, legs: [trip.legs[0]] }, '2029-12-01').length, 'at least two flights');
+  assert.ok(C.validate({ ...trip, legs: [...trip.legs, ...trip.legs] }, '2029-12-01').length, 'at most five flights');
+  assert.ok(C.validate({ ...trip, legs: [{ ...trip.legs[0], outTo: '2030-03-30' }, trip.legs[1]] }, '2029-12-01').some((x) => x.includes('31')), 'a flight range is at most 31 days');
+  // old codes keep working, and a long code is only accepted for trips
+  const rt = { invite: 'Ab3_x9', origin: 'TLV', destination: 'ATH', outFrom: '2030-11-14', outTo: '2030-11-20', retFrom: '2030-11-24', retTo: '2030-11-26', maxPrice: 300 };
+  assert.equal(C.decode(C.encode(rt)).destination, 'ATH');
+  assert.throws(() => C.decode(C.encode(rt) + 'AAAAAAAAAAAAAAAAAAAAAAAAAAAA'));
+  assert.ok(C.describe(q, 'he').join('\n').includes('מסע: 3 טיסות'));
+  assert.ok(C.describe(q, 'en').join('\n').includes('Trip: 3 flights'));
+  console.log('trip code tests passed');
+
+  // engine: per-flight alert rule, total, short leg text
+  const W = require('./watch.js');
+  const now = new Date('2030-01-01T12:00:00Z');
+  W.useProfile(lp, 'leg2');
+  const c = (usd, date) => ({ kind: 'ow', out: date, usd, offers: [{ usd, source: 'kiwi.com', url: 'https://k', bags: [1, 0], legs: [{ date, time: '08:30 – 10:00', stops: 0, airline: 'Thai AirAsia' }] }] });
+  assert.equal(W.legShouldAlert([], null, now), false);
+  assert.equal(W.legShouldAlert([c(50, '2030-01-21')], null, now), true);
+  assert.equal(W.legShouldAlert([c(50, '2030-01-21')], { at: '2030-01-01T10:00:00Z', usd: 52 }, now), false, 'not again within hours for a small drop');
+  assert.equal(W.legShouldAlert([c(40, '2030-01-21')], { at: '2030-01-01T10:00:00Z', usd: 52 }, now), true, 'again after a $10 drop');
+  const txt = W.tripLegText(1, [c(31, '2030-01-20'), c(33, '2030-01-21'), c(40, '2030-01-22')], true);
+  assert.ok(txt.startsWith('2️⃣ <b>בנגקוק → צ׳יאנג מאי</b> · 20–22.1 · 2 נוסעים · סף $60'), txt);
+  assert.equal(txt.split('\n').length, 3, 'cheapest + one more within 10% on another date');
+  assert.ok(txt.includes('לנוסע') && txt.includes('airasia.com'));
+  assert.equal(W.tripLegText(1, [], true).split('\n')[1].trim(), 'לא נמצא מחיר מתאים');
+  assert.deepEqual(W.tripTotal([{ i: 0, pax: 1, best: { usd: 365 } }, { i: 1, pax: 2, best: { usd: 31 } }, { i: 2, pax: 2, best: null }]), { usd: 427, missing: [3] });
+  assert.equal(W.legSig(lp), 'BKK|CNX|2030-01-20|2030-01-22|2|0|0');
+  console.log('trip engine tests passed');
+
+  // bot: trip owner line, paused users, /price for one flight
+  const bot = require('./bot.js');
+  assert.equal(bot.routeOf(q), 'מסע: תל אביב → בנגקוק → צ׳יאנג מאי → טוקיו');
+  assert.ok(bot.userLine({ prefs: q }).includes('3 טיסות') && bot.userLine({ prefs: q }).includes('$450/$60/$300'));
+  assert.equal(bot.isPaused({ id: 'uab7fee9cec' }), true);
+  assert.equal(bot.isPaused({ id: 'u0000000001' }), false);
+  console.log('trip bot tests passed');
+}
+
+// Scaling: batches by route, the job's shared cache, per-user Kiwi quota, Google job budget and 48h backoff,
+// Aviasales (Travelpayouts) offers.
+(async () => {
+  const fs = require('fs'); const os = require('os'); const px = require('path');
+  process.env.RUN_CACHE_DIR = fs.mkdtempSync(px.join(os.tmpdir(), 'fb-cache-'));
+  const RC = require('./lib/runcache');
+  const LU = require('./lib/list-users');
+  const W = require('./watch.js');
+  W.useProfile({ origin: 'AAA', destination: 'BBB', airline: '', outMaxStops: 1, outFrom: '2030-12-16', outTo: '2030-12-30', oneWay: true, maxPrice: 900, checkedBags: 0, carryOn: 0 });
+
+  // batches: same route together, at most `size` per batch
+  const u = (id, o, d) => ({ id, prefs: { origin: o, destination: d, oneWay: false } });
+  assert.deepEqual(LU.batches([u('u1', 'TLV', 'ATH'), u('u2', 'TLV', 'BKK'), u('u3', 'TLV', 'ATH'), u('u4', 'JFK', 'LHR'), u('u5', 'TLV', 'ATH')], 2),
+    ['u4 u1', 'u3 u5', 'u2']);
+  assert.deepEqual(LU.pick([u('u1'), u('u2')], '', '', new Set(['u2'])).map((x) => x.id), ['u1'], 'paused users are left out');
+
+  // runcache
+  assert.equal(RC.get('x', { a: 1 }), undefined);
+  RC.put('x', { a: 1 }, [1, 2]);
+  assert.deepEqual(RC.get('x', { a: 1 }), [1, 2]);
+  assert.equal(RC.get('x', { a: 1 }, -1), undefined, 'too old');
+  let calls = 0;
+  const r1 = await RC.cached('y', 'k', async () => { calls++; return 5; });
+  const r2 = await RC.cached('y', 'k', async () => { calls++; return 6; });
+  assert.deepEqual([r1, r2, calls], [{ value: 5, hit: false }, { value: 5, hit: true }, 1]);
+  assert.equal(RC.add('c'), 1); assert.equal(RC.add('c', 2), 3); assert.equal(RC.count('c'), 3);
+
+  // Kiwi: the second identical query comes from the cache; calls over the per-user quota are skipped
+  const realFetch = global.fetch; let kiwiCalls = 0;
+  global.fetch = async () => { kiwiCalls++; return { ok: true, text: async () => 'data: ' + JSON.stringify({ result: { structuredContent: { itineraries: [] } } }) }; };
+  await W.kiwiQuery('out', { q: 1 }); await W.kiwiQuery('out', { q: 1 });
+  assert.equal(kiwiCalls, 1, 'second identical Kiwi query is cached');
+  for (let i = 0; i < 20; i++) await W.kiwiQuery('out', { q: 100 + i });
+  assert.equal(kiwiCalls, 15, 'at most kiwiMaxCallsPerUserRun real calls');
+  global.fetch = realFetch;
+
+  // Google: 48h backoff after a block in the log; nothing is searched (no browser needed) while it lasts
+  const logDir = fs.mkdtempSync(px.join(os.tmpdir(), 'fb-logs-'));
+  fs.writeFileSync(px.join(logDir, 'searches.csv'), 'time_utc,run,user,mode,source,market,kind,status\n2030-01-01T10:00:00Z,1,u1,summary,google,google IL,rt,blocked\n2030-01-01T11:00:00Z,1,u1,summary,kiwi,x,rt,failed\n');
+  assert.equal(W.googleBackoffUntil(Date.parse('2030-01-02T10:00:00Z'), logDir).toISOString(), '2030-01-03T10:00:00.000Z');
+  assert.equal(W.googleBackoffUntil(Date.parse('2030-01-03T10:00:01Z'), logDir), null, 'over after 48h');
+  // Google: the job's budget (40) is shared by its users; a cached search costs nothing
+  RC.add('google', 40);
+  const g = await W.searchGoogle(null, { gl: 'IL', label: 'Google' }, [{ kind: 'out', a: '2030-12-20' }]);
+  assert.deepEqual([g.results.length, g.errors.length], [0, 0], 'over budget: skipped, no browser used');
+
+  // Aviasales cached prices: shown in the regular shape, never alert on their own
+  const one = W.tpOffer({ departure_at: '2030-12-20T10:35:00+02:00', transfers: 0, duration_to: 150, airline: 'LY', price: 210, link: '/search/AAA2012BBB1?t=x' }, 'out');
+  assert.deepEqual([one.legs[0].date, one.legs[0].time, one.legs[0].stops, one.legs[0].hours, one.legs[0].airline, one.price, one.url.startsWith('https://www.aviasales.com/search/AAA2012BBB1')],
+    ['2030-12-20', '10:35', 0, 2.5, 'אל על', 210, true]);
+  assert.equal(W.legOkOut(one.legs[0]), true);
+  assert.equal(W.canAlert({ offers: [one] }), false);
+  assert.equal(W.canAlert({ offers: [{ source: 'kiwi.com' }] }), true);
+  const rt = W.tpOffer({ departure_at: '2030-12-20T10:35:00+02:00', return_at: '2031-01-12T22:00:00+02:00', transfers: 1, return_transfers: 0, duration_to: 300, duration_back: 200, airline: 'A3', price: 400, link: '/x' }, 'rt');
+  assert.deepEqual(rt.legs.map((l) => l.date), ['2030-12-20', '2031-01-12']);
+  assert.equal(W.tpOffer({ departure_at: '2030-12-20T10:35:00+02:00', price: 1 }, 'rt'), null, 'a round trip needs a return');
+  // Home market: US origins use the US Google, Kayak and Aviasales markets; everything else Israel's
+  W.useProfile({ origin: 'JFK', destination: 'CUN', outMaxStops: 1, outFrom: '2030-12-16', outTo: '2030-12-20', oneWay: true, maxPrice: 500 });
+  assert.equal(W.homeCountry(), 'US');
+  assert.deepEqual(W.forHome([{ gl: 'IL', country: 'IL' }, { gl: 'US', country: 'US' }]).map((m) => m.gl), ['US']);
+  W.useProfile({ origin: 'TLV', destination: 'ATH', outMaxStops: 1, outFrom: '2030-12-16', outTo: '2030-12-20', oneWay: true, maxPrice: 500 });
+  assert.equal(W.homeCountry(), 'IL');
+  assert.deepEqual(W.forHome([{ gl: 'IL' }, { gl: 'US', country: 'US' }]).map((m) => m.gl), ['IL'], 'no country = Israel');
+  console.log('scaling tests passed');
+})().catch((e) => { console.error(e); process.exit(1); });

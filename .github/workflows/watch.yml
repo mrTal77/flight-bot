@@ -49,12 +49,14 @@ jobs:
     needs: plan
     if: needs.plan.outputs.users != '[]' && needs.plan.outputs.users != ''
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       max-parallel: 4
       matrix:
-        user: ${{ fromJSON(needs.plan.outputs.users) }}
+        # Each entry is a batch of user ids (lib/list-users.js): users with the same route share one job, so their
+        # searches share the job's cache, and the job's Google budget (googleMaxPerJob) is split between them.
+        batch: ${{ fromJSON(needs.plan.outputs.users) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -85,26 +87,37 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           DUFFEL_TOKEN: ${{ secrets.DUFFEL_TOKEN }}
+          TRAVELPAYOUTS_TOKEN: ${{ secrets.TRAVELPAYOUTS_TOKEN }}
+          TRAVELPAYOUTS_MARKER: ${{ secrets.TRAVELPAYOUTS_MARKER }}
+          CLICK_URL: ${{ secrets.CLICK_URL }}
+          CLICK_SECRET: ${{ secrets.CLICK_SECRET }}
           MODE: ${{ needs.plan.outputs.mode }}
-          USER_ID: ${{ matrix.user }}
+          BATCH: ${{ matrix.batch }}
         run: |
-          case "$MODE" in
-            summary)    node watch.js --user "$USER_ID" --summary ;;
-            test-alert) TEST_ALERT=1 MAX_PRICE_USD=99999 node watch.js --user "$USER_ID" --summary ;;
-            force-summary) FORCE_SUMMARY=1 node watch.js --user "$USER_ID" --summary ;;
-            first)      FIRST_SEARCH=1 node watch.js --user "$USER_ID" --summary ;;
-            *)          node watch.js --user "$USER_ID" ;;
-          esac
+          export RUN_CACHE_DIR="$RUNNER_TEMP/run-cache"   # shared by the batch's users; never committed
+          export BATCH_SIZE=$(echo $BATCH | wc -w)
+          failed=0
+          for USER_ID in $BATCH; do
+            echo "::group::user $USER_ID"
+            case "$MODE" in
+              summary)    node watch.js --user "$USER_ID" --summary ;;
+              test-alert) TEST_ALERT=1 MAX_PRICE_USD=99999 node watch.js --user "$USER_ID" --summary ;;
+              force-summary) FORCE_SUMMARY=1 node watch.js --user "$USER_ID" --summary ;;
+              first)      FIRST_SEARCH=1 node watch.js --user "$USER_ID" --summary ;;
+              *)          node watch.js --user "$USER_ID" ;;
+            esac || failed=1   # one user's crash does not stop the others
+            echo "::endgroup::"
+          done
+          exit $failed
 
       - name: Save state
         if: always()
         env:
-          USER_ID: ${{ matrix.user }}
+          BATCH: ${{ matrix.batch }}
         run: |
-          f="data/state/$USER_ID.enc"
           git config user.name "flight-watch-bot"
           git config user.email "flight-watch-bot@users.noreply.github.com"
-          [ -f "$f" ] && git add "$f"
+          for USER_ID in $BATCH; do f="data/state/$USER_ID.enc"; [ -f "$f" ] && git add "$f"; done
           git add logs/ 2>/dev/null || true   # search log; .gitattributes merges parallel runs line by line
           git diff --cached --quiet && exit 0
           git commit -m "state update"

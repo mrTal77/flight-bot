@@ -12,13 +12,24 @@ Everything runs on free GitHub services: GitHub Actions (searches and the bot) a
   (`docs/codec.js`) and opens `t.me/<bot>?start=<code>`. Sign-up needs an invite link (`?i=<invite>`).
 - **Bot** (`bot.js`, every 5 minutes): reads new Telegram messages, checks the invite, validates the preferences,
   stores the user and starts a first search. Commands: `/status`, `/edit` (link to the user's own form, prefilled; saving it replaces their settings), `/price`, `/dest`, `/out`, `/back` (change one setting in the chat), `/lang`, `/stop` (deletes the user's data), `/help`. One user per Telegram chat: any update replaces that user's settings.
-- **Search** (`watch.js`, every 4 hours + one daily summary at 21:00 Israel time; a summary run outside 20:45–24:00 or a second one the same day runs as a plain check; a new user's first results come right away): one job per user, in parallel. Sources:
-  - Kayak in a headless browser, Israel (with Kayak's checked-bag filter) and Australia (prices in AUD, converted;
+- **Trips** ("כמה טיסות" in the form): 2 to 5 one-way flights in one sign-up. Each flight has its own route, dates,
+  passengers, stops, airline and price limit; cabin and bags are shared. Each flight is searched on its own (the day's
+  Google and Kayak budgets are split between the flights, so a trip makes about as many searches as one round trip),
+  alerts come per flight when that flight is under its own limit, and the daily summary has two lines per flight plus
+  the trip total for all passengers. Code v5 (`docs/codec.js`): about 44 characters for 3 flights; a code over 64
+  characters (many flights with many filters) does not fit in a Telegram link, so the page asks to paste `/start CODE`
+  to the bot (up to 200 characters). In the chat: `/price 2 400` (flight 2) or `/price 400` (every flight); dates and
+  places change through `/edit`. One ticket for the whole trip (multi-city) is planned for a later phase.
+- **Search** (`watch.js`, every 4 hours + one daily summary at 21:00 Israel time; a summary run outside 20:45–24:00 or a second one the same day runs as a plain check; a new user's first results come right away): users are grouped in batches by route (`usersPerJob`, default 4), one job per batch, in parallel; a job searches its users one after the other. Sources:
+  - Kayak (off since 27.11.2026, `"kayak": false`: it blocked all 637 logged searches; the summary still links to it) in a headless browser, Israel (with Kayak's checked-bag filter) and Australia (prices in AUD, converted;
     its bag filter has no effect, so bags show as unknown), "±3 days" grids: one-way outbound, one-way returns, and round trips.
   - Kiwi.com's public MCP server (`https://mcp.kiwi.com`, free): one-way, returns, round trips, and single tickets
     with the return on any airline (the outbound is pinned to the chosen airline's departure hours).
   - Google Flights, once a day with the summary, for every user: the search link carries the user's filters
     (passengers, cabin, stops and airline per leg); up to `googleMaxSearches` dates or date pairs a day, spread over the range.
+  - Aviasales Data API (Travelpayouts, optional `TRAVELPAYOUTS_TOKEN`, free): prices other Aviasales users found in the
+    last 48 hours, not a live search. They show in the summary marked as cached and with bags unknown ("*"), but never
+    alert on their own (`travelpayoutsAlerts`). With `TRAVELPAYOUTS_MARKER` the links carry the affiliate marker.
   - For the bot owner only: Duffel (optional `DUFFEL_TOKEN`).
   - A failed search is tried once more after a short pause.
   - Skyscanner was tried (13.11.2026) and is not used: it blocks automated browsers at once.
@@ -28,6 +39,19 @@ Everything runs on free GitHub services: GitHub Actions (searches and the bot) a
   limit (per passenger). Prices where the bags are known to be missing are dropped; when it is unknown, the price is
   shown and marked with "*".
 
+## Scaling (many users)
+
+- **Shared cache per job** (`lib/runcache.js`): a batch's users with the same Kiwi, Google or Aviasales query share one
+  call (`cacheMinutes`). The cache is a folder on the runner, never committed.
+- **Per-user quota**: at most `kiwiMaxCallsPerUserRun` (15) Kiwi calls per run; the rest are logged as skipped.
+- **Google budget per job**: every search in a job comes from one IP address, and Google blocks an address after
+  about 50 searches, so a job makes at most `googleMaxPerJob` (40), split between its users.
+- **Google backoff**: after a Google block (any job; read from `logs/searches.csv`), nobody searches Google for
+  `googleBackoffHours` (48).
+
+- **Home market**: a search from a US airport uses Google Flights US (`gl=US`), Kayak.com links and the Aviasales
+  US market; any other origin uses Israel's (`country` in `markets` / `googleMarkets`).
+
 ## Search log (debugging)
 
 - `logs/searches.csv`: one row per search that failed, was blocked, or worked only on the second try
@@ -35,6 +59,9 @@ Everything runs on free GitHub services: GitHub Actions (searches and the bot) a
 - `logs/runs.csv`: one row per user run, with the number of searches per source that worked / failed / were blocked / were skipped.
 - `logs/messages.csv`: one row per Telegram message sent (time, run, user id, bot or search, kind: summary / alert /
   signup / a command / admin-notice, sent or failed, length). No message text and no chat ids.
+- `logs/clicks.csv`: link clicks per day, user id, site (kayak / kiwi / google / airline / other) and message type.
+  Links in search messages go through a small Cloudflare Worker (`cloudflare/worker.js`) that counts the click and
+  redirects at once; the bot reads the counts every run. Off until `CLICK_URL` and `CLICK_SECRET` are set: see `CLICKS-SETUP.md`.
 - No personal data: users are random ids; errors have links and dates removed; no routes, dates, prices or names.
 - Read it with `/errors` in the bot (owner only; `/errors 72` for 72 hours) or `node tools/logs.js [hours]`.
   Parallel runs append to the same files; `.gitattributes` merges them line by line.
@@ -64,6 +91,7 @@ Everything runs on free GitHub services: GitHub Actions (searches and the bot) a
    - `TELEGRAM_BOT_TOKEN`: from @BotFather.
    - `TELEGRAM_CHAT_ID`: the owner's chat id (gets the extra owner-only searches).
    - `DUFFEL_TOKEN` (optional).
+   - `TRAVELPAYOUTS_TOKEN` (optional; free at travelpayouts.com → Tools → API) and `TRAVELPAYOUTS_MARKER` (optional, the affiliate id).
 2. Pages: Settings → Pages → Deploy from a branch → `main`, folder `/docs`.
 3. Invite link: `https://<user>.github.io/<repo>/?i=<invite>`. To add an invite, put the SHA-256 of a new
    6-character code in `config.json` → `invites`.
@@ -77,7 +105,9 @@ Everything runs on free GitHub services: GitHub Actions (searches and the bot) a
 | `invites` | SHA-256 hashes of valid invite codes |
 | `realertDropUsd`, `realertHours` | when to alert again |
 | `markets` | Kayak sites; `bagFilter` makes prices include a checked bag |
-| `kiwi`, `googleDaily`, `googleMaxSearches`, `duffelEveryHours` | sources on/off, Google searches a day |
+| `kiwi`, `kayak`, `travelpayouts`, `googleDaily`, `googleMaxSearches`, `duffelEveryHours` | sources on/off, Google searches a day per user |
+| `usersPerJob`, `cacheMinutes`, `kiwiMaxCallsPerUserRun`, `googleMaxPerJob`, `googleBackoffHours`, `travelpayoutsAlerts` | scaling: see "Scaling" |
+| `pausedUsers` | user ids that are paused: no searches and no messages; their settings and state stay (remove the id to turn them back on) |
 | `userExtras` | per user (random id): `preferAirlines` codes get their own nonstop Kiwi searches and are shown first (⭐) |
 
 ## Local test

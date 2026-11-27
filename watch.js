@@ -7,6 +7,8 @@
 //   "rt"    one round-trip ticket (Kayak, Kiwi)
 //   "mixed" two separate one-way tickets (outbound + cheapest valid return)
 //   "ow"    one-way trips (when the user asked for one-way)
+// A trip ("מסע", several one-way flights) searches each flight on its own, one after the other, with that flight's
+// passengers, filters and price limit; it has its own price threshold and alert per flight and a short summary.
 // Usage:
 //   node watch.js --user <id> [--summary] [--dry]    search for a registered user
 //   node watch.js --profile file.json [--summary] --dry   local test with a plain profile file
@@ -26,6 +28,11 @@ const vlog = (...a) => { if (VERBOSE) console.log(...a); };
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
 
 const BASE = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
+const runcache = require('./lib/runcache');
+// A job searches a batch of users from the same runner (one IP address). Google blocks an address after about 50
+// searches, so the job's Google budget (googleMaxPerJob) is split between the batch: BATCH_SIZE users.
+const BATCH_SIZE = Math.max(1, Number(process.env.BATCH_SIZE) || 1);
+BASE.googleMaxSearches = Math.max(1, Math.min(BASE.googleMaxSearches || 10, Math.floor((BASE.googleMaxPerJob || 40) / BATCH_SIZE)));
 // Default profile for unit tests (require('./watch.js')).
 const codec = require('./docs/codec.js');
 const TEST_PREFS = { origin: 'AAA', destination: 'BBB', airline: 'LY', outMaxStops: 0, outFrom: '2030-12-16', outTo: '2030-12-30',
@@ -38,6 +45,7 @@ let USER;
 if (USER_ID) {
   USER = store.loadUsers().users[USER_ID];
   if (!USER) { console.error('unknown user id'); process.exit(require.main === module ? 1 : 0); }
+  if ((BASE.pausedUsers || []).includes(USER_ID) && require.main === module) { console.log('user is paused (config.json pausedUsers): nothing to do'); process.exit(0); }
 } else if (PROFILE_FILE) {
   USER = JSON.parse(fs.readFileSync(PROFILE_FILE, 'utf8'));
 } else {
@@ -57,10 +65,22 @@ function configFor(p0) {
     maxTripDays: p.oneWay ? 0 : p.maxTripDays, maxPriceUsd: p.maxPrice, // price limit is per passenger
   };
 }
-const CONFIG = configFor(USER.prefs);
-if (process.env.MAX_PRICE_USD) CONFIG.maxPriceUsd = Number(process.env.MAX_PRICE_USD); // for testing the alert
-const OUT = CONFIG.outbound;
-const RET = CONFIG.return; // null for one-way
+// The profile being searched. For a trip it is switched to each flight in turn (useProfile), so everything
+// below that reads CONFIG / OUT / RET / PAX works on that one flight.
+const TRIP = codec.isTrip(USER.prefs);
+let CONFIG; let OUT; let RET; let PAX; let BAG_PAX; let SIMPLE_PAX;
+let LEG_TAG = ''; // "leg1", "leg2"... in the search log while a trip's flight is searched
+function useProfile(prefs, legTag) {
+  CONFIG = configFor(prefs);
+  if (process.env.MAX_PRICE_USD) CONFIG.maxPriceUsd = Number(process.env.MAX_PRICE_USD); // for testing the alert
+  OUT = CONFIG.outbound;
+  RET = CONFIG.return; // null for one-way
+  PAX = CONFIG.pax.adults + CONFIG.pax.children + CONFIG.pax.infants;
+  BAG_PAX = CONFIG.pax.adults + CONFIG.pax.children; // infants get no bag allowance
+  SIMPLE_PAX = PAX === 1 && CONFIG.cabin === 'economy'; // sources that only handle 1 adult in economy
+  LEG_TAG = legTag || '';
+}
+useProfile(TRIP ? codec.legPrefs(USER.prefs, 0) : USER.prefs);
 const OWNER = !!USER.owner; // the bot owner also gets Duffel (El Al nonstop fares; needs DUFFEL_TOKEN)
 // Per-user extras from config.json "userExtras" (keyed by the random user id; no personal data):
 //   preferAirlines: airline codes this user prefers. Their nonstop flights get their own searches and are
@@ -71,9 +91,6 @@ const PREFER = (EXTRA.preferAirlines || []).map((x) => String(x).toUpperCase());
 const AIRLINE_NAME_RE = { Y4: /volaris/i, AM: /aero ?m[eé]xico/i, VB: /viva ?aerobus/i, LY: /el ?al|אל על/i, IZ: /arkia|ארקיע/i, '6H': /israir|ישראייר/i };
 const flies = (leg, code) => !!leg && ((leg.carriers && leg.carriers.length && leg.carriers.every((c) => c === code))
   || (!(leg.carriers && leg.carriers.length) && !!AIRLINE_NAME_RE[code] && AIRLINE_NAME_RE[code].test(leg.airline || '') && !/[+,]/.test(leg.airline || '')));
-const PAX = CONFIG.pax.adults + CONFIG.pax.children + CONFIG.pax.infants;
-const BAG_PAX = CONFIG.pax.adults + CONFIG.pax.children; // infants get no bag allowance
-const SIMPLE_PAX = PAX === 1 && CONFIG.cabin === 'economy'; // sources that only handle 1 adult in economy
 
 const PRICE_RE = {
   ILS: /₪\s?([\d,]+)/,
@@ -89,7 +106,17 @@ const AIRLINE_HE = { LY: 'אל על', IZ: 'ארקיע', '6H': 'ישראייר' }
 const CITY_HE = { TLV: 'תל אביב', MIA: 'מיאמי', JFK: 'ניו יורק', EWR: 'ניו יורק', LAX: 'לוס אנג׳לס', LHR: 'לונדון', CDG: 'פריז',
   BKK: 'בנגקוק', FCO: 'רומא', ATH: 'אתונה', BCN: 'ברצלונה', MAD: 'מדריד', BER: 'ברלין', AMS: 'אמסטרדם', DXB: 'דובאי', BUD: 'בודפשט',
   PRG: 'פראג', VIE: 'וינה', LCA: 'לרנקה', IST: 'איסטנבול', SFO: 'סן פרנסיסקו', ORD: 'שיקגו', YYZ: 'טורונטו', NRT: 'טוקיו', HND: 'טוקיו' };
-codec.setPlaces(JSON.parse(fs.readFileSync(path.join(__dirname, 'docs', 'airports.json'), 'utf8')));
+const AIRPORT_ROWS = JSON.parse(fs.readFileSync(path.join(__dirname, 'docs', 'airports.json'), 'utf8'));
+codec.setPlaces(AIRPORT_ROWS);
+// Home market of a search: the US for flights from a US airport, otherwise Israel (the two markets the bot serves).
+// It picks the Google Flights country, the Kayak sites linked in the summary, and the Aviasales market.
+const AIRPORT_COUNTRY = Object.fromEntries(AIRPORT_ROWS.map((r) => [r[0], r[3]]));
+const homeCountry = () => (AIRPORT_COUNTRY[CONFIG.origin] === 'US' ? 'US' : 'IL');
+function forHome(list) {
+  const all = list || []; const c = homeCountry();
+  const mine = all.filter((x) => (x.country || 'IL') === c);
+  return mine.length ? mine : all.filter((x) => (x.country || 'IL') === 'IL');
+}
 const cityHe = (c) => CITY_HE[c] || codec.placeName(c);
 const outAirlineHe = () => (OUT.airline ? AIRLINE_HE[OUT.airline] || OUT.airline : '');
 function heAirline(name) {
@@ -141,7 +168,7 @@ async function retryOnce(fn, waitMs = 8000) {
 const SEARCH_LOG = [];
 const scrub = (msg) => String(msg || '').split('\n')[0].replace(/https?:\/\/\S+/g, '<link>').replace(/\d{4}-\d{2}-\d{2}/g, '<date>').replace(/[",;\r]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
 function logSearch(source, market, kind, status, attempts, sec, results, error) {
-  SEARCH_LOG.push({ source, market, kind, status, attempts, sec, results, error: scrub(error) });
+  SEARCH_LOG.push({ source, market, kind: LEG_TAG && source !== 'telegram' ? LEG_TAG : kind, status, attempts, sec, results, error: scrub(error) });
 }
 const blockedError = (why) => Object.assign(new Error(`blocked: ${why}`), { blocked: true });
 // Runs one search and records the outcome. A failure is tried once more after a pause; a block is not
@@ -160,6 +187,7 @@ async function tracked(source, market, kind, fn, waitMs = 8000, count = (r) => (
   }
 }
 const { appendCsv, logMessages } = require('./lib/logs');
+const { trackLinks } = require('./lib/clicks');
 const MESSAGES = []; // messages sent in this run, for logs/messages.csv
 // Written at the end of every real run (not dry runs), and also when a run crashes.
 function writeLogs(outcome, offersCount, startedMs) {
@@ -169,7 +197,7 @@ function writeLogs(outcome, offersCount, startedMs) {
   const dir = path.join(__dirname, 'logs');
   logMessages(MESSAGES.map((m) => ({ ...m, user: USER_ID, sender: 'search' })), dir);
   appendCsv(path.join(dir, 'searches.csv'), ['time_utc', 'run', 'user', 'mode', 'source', 'market', 'kind', 'status', 'attempts', 'seconds', 'results', 'error'],
-    SEARCH_LOG.filter((x) => x.status !== 'ok' && x.status !== 'skipped').map((x) => [at, run, USER_ID, mode, x.source, x.market, x.kind, x.status, x.attempts, x.sec, x.results, x.error]));
+    SEARCH_LOG.filter((x) => !['ok', 'skipped', 'cached'].includes(x.status)).map((x) => [at, run, USER_ID, mode, x.source, x.market, x.kind, x.status, x.attempts, x.sec, x.results, x.error]));
   const n = (src, st) => SEARCH_LOG.filter((x) => x.source === src && (Array.isArray(st) ? st.includes(x.status) : x.status === st)).length;
   const per = (src) => [n(src, ['ok', 'ok-after-retry']), n(src, 'failed'), n(src, 'blocked'), n(src, 'skipped')];
   appendCsv(path.join(dir, 'runs.csv'), ['time_utc', 'run', 'user', 'mode', 'seconds', 'kayak_ok', 'kayak_failed', 'kayak_blocked', 'kayak_skipped',
@@ -220,6 +248,8 @@ const pairOk = (outDate, retDate) => !CONFIG.maxTripDays || retDate <= addDays(o
 // Offers that may be shown and alerted: bags included, or not known (marked "*").
 const bagReq = (o) => bagState(o) !== 'no';
 const bagUnknown = (c) => c.offers.some((o) => bagState(o) === 'unknown');
+// Prices that may be out of date (Aviasales cache) are shown but do not alert on their own.
+const canAlert = (c) => !c.offers.some((o) => o.noAlert);
 
 // ---------- Kayak ----------
 // Kayak's stops filter: "stops=0,1" = nonstop or 1 stop. ("stops=~1" means exactly 1 stop; checked 8.11.)
@@ -405,9 +435,24 @@ function kiwiPush(results, sc, kind, extra) {
     });
   }
 }
+// Kiwi searches go through the job's shared cache (lib/runcache.js): a second user of the batch with the same
+// query (same route, dates, passengers and filters) gets the saved answer and costs no call.
+// Per-user quota: at most kiwiMaxCallsPerUserRun real calls per run (a 5-flight trip with preferred airlines
+// could otherwise send dozens). Calls over the quota are logged as skipped.
+let KIWI_CALLS = 0;
+let CACHE_HITS = 0;
+async function kiwiQuery(kind, req) {
+  const hit = runcache.get('kiwi', req, BASE.cacheMinutes || 90);
+  if (hit !== undefined) { CACHE_HITS++; logSearch('kiwi', 'mcp.kiwi.com', kind, 'cached', 0, 0, (hit.itineraries || []).length); return hit; }
+  if (KIWI_CALLS >= (BASE.kiwiMaxCallsPerUserRun || 15)) { logSearch('kiwi', 'mcp.kiwi.com', kind, 'skipped', 0, 0, 0, 'per-user quota'); return { itineraries: [] }; }
+  KIWI_CALLS++;
+  const sc = await tracked('kiwi', 'mcp.kiwi.com', kind, () => kiwiCall(req), 5000, (r) => (r.itineraries || []).length);
+  runcache.put('kiwi', req, sc);
+  return sc;
+}
 async function searchKiwi() {
   const results = []; const errors = [];
-  const call = (kind, a, extra) => tracked('kiwi', 'mcp.kiwi.com', kind, () => kiwiCall({ ...kiwiCommon(), ...a }), 5000, (sc) => (sc.itineraries || []).length)
+  const call = (kind, a, extra) => kiwiQuery(kind, { ...kiwiCommon(), ...a })
     .then((sc) => kiwiPush(results, sc, kind, extra))
     .catch((e) => errors.push(`kiwi.com ${kind}: ${e.message}`));
   const outArgs = { flyFrom: CONFIG.origin, flyTo: CONFIG.destination, departureDate: dmy(OUT.from), departureDateTo: dmy(OUT.to),
@@ -536,17 +581,100 @@ async function googleSearch(browser, gm, task) {
     });
   } finally { await ctx.close(); }
 }
+const GOOGLE_BLOCKED = new Set(); // a Google market that blocked us is not tried again in this run (a trip's later flights)
+// After Google blocks a search (anywhere: the block is in logs/searches.csv, which every job reads), Google is not
+// searched for googleBackoffHours (48) for any user. Trying again soon only keeps the block going.
+function googleBackoffUntil(now = Date.now(), dir) {
+  const hours = BASE.googleBackoffHours ?? 48;
+  if (!hours) return null;
+  const rows = require('./lib/logs').readCsv('searches.csv', dir).filter((r) => r.source === 'google' && r.status === 'blocked');
+  const inJob = runcache.flag('google-blocked'); // a block earlier in this job, not yet in the log
+  const last = [...rows.map((r) => r.time_utc), inJob].filter(Boolean).sort().pop();
+  if (!last) return null;
+  const until = new Date(last).getTime() + hours * 36e5;
+  return until > now ? new Date(until) : null;
+}
 async function searchGoogle(browser, gm, tasks) {
   const results = []; const errors = [];
   let failedInARow = 0;
-  for (const t of tasks) {
+  const skipAll = (from, why) => tasks.slice(from).forEach((t) => logSearch('google', `google ${gm.gl}`, t.kind, 'skipped', 0, 0, 0, why));
+  if (GOOGLE_BLOCKED.has(gm.gl)) { skipAll(0, 'site blocked earlier in this run'); return { results, errors }; }
+  const backoff = googleBackoffUntil();
+  if (backoff) { skipAll(0, 'backoff after a block'); console.log(`google: paused after a block, until ${backoff.toISOString().slice(0, 13)}h UTC`); return { results, errors }; }
+  const jobMax = BASE.googleMaxPerJob || 40; // searches from this runner's address, all users of the batch together
+  for (let i = 0; i < tasks.length; i++) {
+    const t = tasks[i];
     if (failedInARow >= 2) { errors.push(`${gm.label}: stopped after 2 failed searches in a row`); break; }
-    try { results.push(...await tracked('google', `google ${gm.gl}`, t.kind, () => googleSearch(browser, gm, t), 10000)); failedInARow = 0; } catch (e) {
-      if (e.blocked) { errors.push(`${gm.label}: blocked`); break; }
+    const url = googleUrl(t, gm.gl);
+    const hit = runcache.get('google', url, BASE.cacheMinutes || 90);
+    if (hit !== undefined) { CACHE_HITS++; logSearch('google', `google ${gm.gl}`, t.kind, 'cached', 0, 0, hit.length); results.push(...hit.map((o) => ({ ...o, source: gm.label }))); continue; }
+    if (runcache.count('google') >= jobMax) { skipAll(i, 'job budget'); console.log(`google: the job's budget of ${jobMax} searches is used up`); break; }
+    runcache.add('google');
+    try {
+      const r = await tracked('google', `google ${gm.gl}`, t.kind, () => googleSearch(browser, gm, t), 10000);
+      runcache.put('google', url, r); results.push(...r); failedInARow = 0;
+    } catch (e) {
+      if (e.blocked) { GOOGLE_BLOCKED.add(gm.gl); runcache.flag('google-blocked', new Date().toISOString()); errors.push(`${gm.label}: blocked`); skipAll(i + 1, 'site blocked earlier in this run'); break; }
       failedInARow++; errors.push(`${gm.label} ${t.kind} ${t.a}: ${e.message.split('\n')[0].slice(0, 120)}`);
     }
     await sleep(2500);
   }
+  return { results, errors };
+}
+
+// ---------- Aviasales Data API (Travelpayouts; free with a token, optional TRAVELPAYOUTS_TOKEN) ----------
+// Prices other Aviasales users found in the last 48 hours (not a live search), up to 600 calls a minute.
+// Good for many routes worldwide at no cost; the prices can be out of date, so by default they are shown in the
+// summary but never alert on their own (travelpayoutsAlerts). Bags are unknown ("*"). Economy only.
+// With TRAVELPAYOUTS_MARKER the links carry the affiliate marker (Travelpayouts pays per booking).
+const monthsIn = (from, to) => [...new Set(dateRange(from, to).map((d) => d.slice(0, 7)))];
+async function tpCall(params) {
+  const token = (process.env.TRAVELPAYOUTS_TOKEN || '').trim();
+  const u = new URL('https://api.travelpayouts.com/aviasales/v3/prices_for_dates');
+  for (const [k, v] of Object.entries({ ...params, currency: 'usd', market: homeCountry().toLowerCase(), sorting: 'price', limit: 1000 })) u.searchParams.set(k, String(v));
+  const res = await fetch(u, { headers: { 'x-access-token': token, accept: 'application/json' }, signal: AbortSignal.timeout(30000) });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const j = await res.json();
+  if (j.success === false) throw new Error(`api error ${scrub(j.error)}`);
+  return j.data || [];
+}
+function tpLeg(at, transfers, minutes, airline) {
+  return { date: at.slice(0, 10), time: at.slice(11, 16), stops: transfers ?? undefined, hours: minutes ? minutes / 60 : null,
+    carriers: airline ? [airline] : [], airline: heAirline(AIRLINE_HE[airline] || airline || '') };
+}
+function tpLink(link) {
+  if (!link) return null;
+  const u = new URL(link, 'https://www.aviasales.com');
+  const marker = (process.env.TRAVELPAYOUTS_MARKER || '').trim();
+  if (marker) u.searchParams.set('marker', marker);
+  return u.toString();
+}
+// One API item -> an offer in the same shape as the other sources (price per passenger, in USD).
+function tpOffer(it, kind) {
+  const legs = [tpLeg(it.departure_at, it.transfers, it.duration_to || (kind === 'rt' ? null : it.duration), it.airline)];
+  if (kind === 'rt') { if (!it.return_at) return null; legs.push(tpLeg(it.return_at, it.return_transfers, it.duration_back, it.airline)); }
+  return { kind, legs, price: Number(it.price), currency: 'USD', source: 'Aviasales (מחיר מהמטמון)', bags: [], url: tpLink(it.link),
+    airlines: [legs[0].airline], noAlert: !BASE.travelpayoutsAlerts };
+}
+async function searchTravelpayouts() {
+  const results = []; const errors = [];
+  if (!(process.env.TRAVELPAYOUTS_TOKEN || '').trim() || BASE.travelpayouts === false || CONFIG.cabin !== 'economy') return { results, errors };
+  const q = async (kind, params) => {
+    try {
+      const { value, hit } = await runcache.cached('tp', params, () => tracked('travelpayouts', 'api.travelpayouts.com', kind, () => tpCall(params), 5000), BASE.cacheMinutes || 90);
+      if (hit) CACHE_HITS++;
+      results.push(...value.map((it) => tpOffer(it, kind)).filter(Boolean));
+    } catch (e) { errors.push(`travelpayouts ${kind}: ${e.message}`); }
+  };
+  const direct = (R) => (R.maxStops === 0 ? { direct: true } : {});
+  const jobs = monthsIn(OUT.from, OUT.to).map((m) => () => q('out', { origin: CONFIG.origin, destination: CONFIG.destination, departure_at: m, one_way: true, ...direct(OUT) }));
+  if (RET) {
+    jobs.push(...monthsIn(RET.from, RET.to).map((m) => () => q('ret', { origin: CONFIG.destination, destination: CONFIG.origin, departure_at: m, one_way: true, ...direct(RET) })));
+    for (const a of monthsIn(OUT.from, OUT.to)) for (const b of monthsIn(RET.from, RET.to)) {
+      jobs.push(() => q('rt', { origin: CONFIG.origin, destination: CONFIG.destination, departure_at: a, return_at: b, one_way: false, ...(OUT.maxStops === 0 && RET.maxStops === 0 ? { direct: true } : {}) }));
+    }
+  }
+  await Promise.all(jobs.slice(0, 8).map((f) => f())); // a 5-month range is at most a few calls; never more than 8
   return { results, errors };
 }
 
@@ -591,6 +719,7 @@ async function searchDuffel(dates) {
 // Sends a message to this user. Tried once more on failure; a message that still fails is logged
 // (logs/searches.csv, source "telegram") and the run goes on, so the search state is still saved.
 async function telegram(text, type = 'message') {
+  text = trackLinks(text, USER_ID, type); // links go through the click counter when it is set up (lib/clicks.js)
   if (DRY) { console.log('--- TELEGRAM (dry run) ---\n' + text + '\n---'); return; }
   const token = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
   const chatId = USER.chatId;
@@ -753,6 +882,226 @@ function candText(c, i) {
   ].join('\n') + lowCostLinks(c) + alsoText(c);
 }
 
+// ---------- search one profile ----------
+const KAYAK_BLOCKED = new Set();
+// All sources for the current profile (one round trip / one way, or one flight of a trip). Returns valid offers.
+async function searchAll(browser, state, now, rates) {
+  const t0 = Date.now();
+  const timed = (name, pr) => pr.then((r) => { console.log(`[${name}] ${r.results.length} results, ${r.errors.length} errors, ${Math.round((Date.now() - t0) / 1000)}s`); return r; });
+
+  // Kayak: every market x every task, a few pages at a time.
+  // Wide date ranges: each run checks a different slice of the Kayak windows (Kiwi always covers everything).
+  const tasks = CONFIG.kayak === false ? [] : kayakTasks(state.kayakTurn);
+  if (tasks.length) console.log(`kayak tasks per market: ${tasks.length}`);
+  const kayakJob = CONFIG.kayak === false ? Promise.resolve({ results: [], errors: [] }) : (async () => {
+    const jobs = forHome(CONFIG.markets).flatMap((m) => tasks.map((t) => ({ m, t })));
+    const blockedHosts = KAYAK_BLOCKED; // after a block, the rest of that site's searches in this run are skipped
+    const res = await pool(jobs, CONFIG.concurrency || 6, async ({ m, t }) => {
+      if (blockedHosts.has(m.host)) { logSearch('kayak', m.host, t.kind, 'skipped', 0, 0, 0, 'site blocked earlier in this run'); return { results: [], errors: [] }; }
+      try { return { results: await tracked('kayak', m.host, t.kind, () => kayakSearch(browser, m, t)), errors: [] }; } catch (e) {
+        if (e.blocked) blockedHosts.add(m.host);
+        return { results: [], errors: [`${m.label || m.host} ${t.kind}: ${e.message.split('\n')[0].slice(0, 80)}`] };
+      }
+    });
+    return { results: res.flatMap((r) => r.results), errors: res.flatMap((r) => r.errors) };
+  })();
+  const kiwiJob = CONFIG.kiwi === false ? Promise.resolve({ results: [], errors: [], slot: null }) : searchKiwi();
+  const outDates = dateRange(OUT.from, OUT.to);
+  // Google Flights once a day (with the daily summary), for every user, with the user's own filters.
+  const googleOn = SUMMARY && CONFIG.googleDaily !== false;
+  const googleJob = googleOn
+    ? (async () => {
+      const out = { results: [], errors: [] }; const gTasks = googleTasks(state.kayakTurn);
+      for (const gm of forHome(CONFIG.googleMarkets)) { const r = await searchGoogle(browser, gm, gTasks); out.results.push(...r.results); out.errors.push(...r.errors); }
+      return out;
+    })()
+    : Promise.resolve({ results: [], errors: [] });
+  const duffelDue = !TRIP && OWNER && SIMPLE_PAX && !!OUT.airline && OUT.maxStops === 0 && !!(process.env.DUFFEL_TOKEN || '').trim()
+    && (!state.lastDuffelAt || (now - new Date(state.lastDuffelAt)) / 36e5 >= (CONFIG.duffelEveryHours || 8) - 0.5);
+  if (duffelDue) state.lastDuffelAt = now.toISOString();
+  const duffelJob = duffelDue ? searchDuffel(outDates) : Promise.resolve({ results: [], errors: [] });
+
+  const tpJob = searchTravelpayouts();
+  const parts = await Promise.all([timed('kayak', kayakJob), timed('kiwi', kiwiJob), timed('google', googleJob), timed('duffel', duffelJob), timed('travelpayouts', tpJob)]);
+
+  const errors = parts.flatMap((p) => p.errors);
+  const valid = (list) => list
+    .map((o) => ({ ...o, usd: o.price / (rates.rates[o.currency] || NaN) }))
+    .filter((o) => Number.isFinite(o.usd))
+    .filter((o) => (o.kind === 'out' ? legOkOut(o.legs[0])
+      : o.kind === 'ret' ? legOkRet(o.legs[0])
+        : o.legs.length === 2 && legOkOut(o.legs[0]) && legOkRet(o.legs[1]) && pairOk(o.legs[0].date, o.legs[1].date)));
+  const offers = valid(parts.flatMap((p) => p.results));
+  return { offers, errors };
+}
+
+// Offers -> trips to show: one ticket, two separate tickets, or one way; cheapest first.
+function candidates(offers) {
+  // Cheapest one-way per date (kept apart by bag status), then all allowed combinations.
+  const cheapestBy = (kind, state) => {
+    const m = new Map();
+    for (const o of offers.filter((x) => x.kind === kind && bagState(x) === state)) if (!m.has(o.legs[0].date) || o.usd < m.get(o.legs[0].date).usd) m.set(o.legs[0].date, o);
+    return m;
+  };
+  const cands = [];
+  if (!RET) {
+    for (const wb of ['yes', 'unknown']) for (const [od, o] of cheapestBy('out', wb)) cands.push({ kind: 'ow', out: od, ret: null, usd: o.usd, offers: [o] });
+  } else {
+    for (const o of offers.filter((x) => x.kind === 'rt')) cands.push({ kind: 'rt', out: o.legs[0].date, ret: o.legs[1].date, usd: o.usd, offers: [o] });
+    // Every pairing of bag states, so a with-bag outbound can combine with an unknown-bag return and so on.
+    for (const so of ['yes', 'unknown']) for (const sr of ['yes', 'unknown']) {
+      const outBy = cheapestBy('out', so); const retBy = cheapestBy('ret', sr);
+      for (const [od, o] of outBy) for (const [rd, r] of retBy) if (pairOk(od, rd)) cands.push({ kind: 'mixed', out: od, ret: rd, usd: o.usd + r.usd, offers: [o, r] });
+    }
+  }
+  // Preferred airlines (per-user extra): also keep their own cheapest nonstop one-way per date, so a cheaper
+  // flight on another airline the same day does not hide them.
+  for (const code of PREFER) {
+    for (const wb of ['yes', 'unknown']) {
+      const m = new Map();
+      for (const o of offers.filter((x) => x.kind === 'out' && bagState(x) === wb && x.legs[0].stops === 0 && flies(x.legs[0], code))) if (!m.has(o.legs[0].date) || o.usd < m.get(o.legs[0].date).usd) m.set(o.legs[0].date, o);
+      if (!RET) for (const [od, o] of m) cands.push({ kind: 'ow', out: od, ret: null, usd: o.usd, offers: [o], prefer: code });
+    }
+  }
+  cands.sort((a, b) => a.usd - b.usd);
+  // One line per (kind, dates, bag known): a cheaper no-bag price must not hide the with-bag price of the same trip.
+  const seen = new Set();
+  const top = cands.filter((c) => { const k = `${c.kind}|${c.out}|${c.ret}|${c.offers.map(bagState).join(',')}|${c.prefer || ''}`; if (seen.has(k)) return false; seen.add(k); return true; });
+  const best = top[0];
+  const bestBag = top.find((c) => c.offers.every(bagReq)); // cheapest that meets the bag rule
+  return { top, best, bestBag, cands };
+}
+
+
+// ---------- trips (several one-way flights) ----------
+// A flight's state is kept only while its route, dates and passengers stay the same.
+const legSig = (q) => [q.origin, q.destination, q.outFrom, q.outTo, q.adults, q.children, q.infants].join('|');
+// The same re-alert rule as a single search, per flight: a new alert when the price dropped enough or enough time passed.
+function legShouldAlert(under, last, now, test) {
+  if (!under.length) return false;
+  if (test || !last) return true;
+  return under[0].usd <= last.usd - CONFIG.realertDropUsd || (now - new Date(last.at)) / 36e5 >= CONFIG.realertHours;
+}
+// "10–16.1", "28.1–3.2", "12.1"
+function shortRange(a, b) {
+  const dm = (iso) => [Number(iso.slice(8)), Number(iso.slice(5, 7))];
+  const [d1, m1] = dm(a); const [d2, m2] = dm(b);
+  if (a === b) return `${d1}.${m1}`;
+  return m1 === m2 ? `${d1}–${d2}.${m1}` : `${d1}.${m1}–${d2}.${m2}`;
+}
+// One option of a trip's flight on one line: price · site · airline, stops · day and time · booking link.
+function tripOptLine(c) {
+  const o = c.offers[0]; const l = o.legs[0];
+  const what = [l.airline, stopsText(l.stops)].filter(Boolean).join(', ');
+  const time = l.time ? ' ' + cleanTime(l.time).split('–')[0] : '';
+  return `   💰 ${priceTag(c)}${PAX > 1 ? ' לנוסע' : ''} · ${o.source} · ${what} · ${heDate(l.date)}${time} · ${link(o, 'להזמנה')}`
+    + lowCostLinks(c).replace('\n🔗 גם באתר החברה: ', ' · 🔗 ');
+}
+// One flight of the trip (for the current profile): a route line, then the cheapest option, and a second one only
+// when it is on another date and costs at most 10% more.
+function tripLegText(i, list, withLimit) {
+  const head = `${NUM[i] || i + 1 + ')'} <b>${cityHe(CONFIG.origin)} → ${cityHe(CONFIG.destination)}</b> · ${shortRange(OUT.from, OUT.to)} · ${PAX} ${PAX === 1 ? 'נוסע' : 'נוסעים'}${withLimit ? ` · סף ${fmtUsd(CONFIG.maxPriceUsd)}` : ''}`;
+  if (!list.length) return `${head}\n   לא נמצא מחיר מתאים`;
+  const pick = [list[0]];
+  const second = list.find((c) => c.out !== list[0].out && c.usd <= list[0].usd * 1.1);
+  if (second) pick.push(second);
+  return [head, ...pick.map(tripOptLine)].join('\n');
+}
+// Total of the cheapest option of every flight, times that flight's passengers. Flights with no price are listed apart.
+function tripTotal(legs) {
+  const found = legs.filter((l) => l.best);
+  return { usd: found.reduce((s, l) => s + l.best.usd * l.pax, 0), missing: legs.filter((l) => !l.best).map((l) => l.i + 1) };
+}
+
+async function mainTrip({ browser, state, now, rates, forceSummary, firstSearch, markSummarySent }) {
+  const p = USER.prefs; const n = p.legs.length;
+  const TEST = process.env.TEST_ALERT === '1'; // test runs always alert and do not touch the real alert history
+  state.legs = Array.isArray(state.legs) ? state.legs : [];
+  delete state.lastAlert; // a trip keeps its alerts per flight
+  const legs = []; const errors = []; let offersCount = 0;
+  // One flight after the other, in the same browser. The day's Google and Kayak budgets are shared by the flights,
+  // so a trip makes about as many searches as one round trip.
+  for (let i = 0; i < n; i++) {
+    const q = codec.legPrefs(p, i);
+    useProfile(q, `leg${i + 1}`);
+    CONFIG.googleMaxSearches = Math.max(2, Math.floor((BASE.googleMaxSearches || 10) / n));
+    CONFIG.kayakMaxTasks = Math.max(4, Math.floor((BASE.kayakMaxTasks || 24) / n));
+    const sig = legSig(q);
+    if (!state.legs[i] || state.legs[i].sig !== sig) state.legs[i] = { sig };
+    const ls = state.legs[i];
+    const r = await searchAll(browser, state, now, rates);
+    offersCount += r.offers.length;
+    errors.push(...r.errors.map((e) => `leg${i + 1} ${e}`));
+    const { top, bestBag } = candidates(r.offers);
+    const ok = top.filter((c) => c.offers.every(bagReq));
+    const under = ok.filter((c) => c.usd <= CONFIG.maxPriceUsd && canAlert(c));
+    const alert = legShouldAlert(under, ls.lastAlert, now, TEST);
+    if (alert && !TEST) ls.lastAlert = { at: now.toISOString(), usd: under[0].usd };
+    ls.bestUsd = bestBag ? Math.round(bestBag.usd) : null;
+    legs.push({
+      i, pax: PAX, best: bestBag || null, any: !!top.length,
+      summary: tripLegText(i, ok, true), summaryUnknown: ok.slice(0, 2).some(bagUnknown),
+      alertText: alert ? tripLegText(i, under, true) : null, alertUnknown: under.slice(0, 2).some(bagUnknown),
+    });
+    console.log(`flight ${i + 1}: valid offers ${r.offers.length}${alert ? ', alert' : ''}`);
+  }
+  state.legs.length = n;
+  const bagTxt = CONFIG.checkedBags ? `${CONFIG.checkedBags === 1 ? 'מזוודה' : CONFIG.checkedBags + ' מזוודות'} לנוסע` : '';
+  const cabinTxt = CONFIG.cabin === 'economy' ? '' : { premium: 'פרימיום', business: 'עסקים', first: 'ראשונה' }[CONFIG.cabin];
+  const total = tripTotal(legs);
+  const anyPrice = legs.some((l) => l.any);
+
+  for (const [k, v] of errors.reduce((m, e) => m.set(scrub(e).slice(0, 140), (m.get(scrub(e).slice(0, 140)) || 0) + 1), new Map())) console.log(`error x${v}: ${k}`);
+  state.lastRun = { at: now.toISOString(), ok: anyPrice, bestUsd: !total.missing.length && total.usd ? Math.round(total.usd) : null, errors: errors.length };
+  state.failStreak = anyPrice ? 0 : (state.failStreak || 0) + 1;
+  const title = `🧳 המסע שלך (${n} טיסות)`;
+  const testMark = forceSummary && !firstSearch ? ['🧪 <i>בדיקה, לא הסיכום היומי</i>'] : [];
+  const kind = firstSearch ? 'first-results' : forceSummary ? 'test-summary' : 'summary';
+
+  if (!anyPrice) {
+    if (state.failStreak === 6 && OWNER) await telegram('⚠️ בוט הטיסות לא הצליח לקרוא מחירים 6 פעמים ברצף. אני ממשיך לנסות.', 'warning');
+    writeLogs('no prices', offersCount, STARTED);
+    if (SUMMARY) { await telegram([...testMark, `🛫 ${firstSearch ? 'החיפוש הראשון' : 'סיכום יומי'} · ${title}: לא הצלחתי לקרוא מחירים. אנסה שוב בהרצה הבאה.`].join('\n'), kind); markSummarySent(); }
+    saveState(state);
+    console.log('no prices found');
+    return;
+  }
+
+  // An alert only about the flights that are under their own limit.
+  const alerting = legs.filter((l) => l.alertText);
+  if (alerting.length) {
+    await telegram([
+      ...(TEST ? ['🧪 <i>הודעת בדיקה, הסף הועלה זמנית</i>'] : []),
+      `🔔 <b>נמצא מחיר מתחת לסף</b> · ${title}`, '',
+      alerting.map((l) => l.alertText).join('\n\n'), '',
+      ...(alerting.some((l) => l.alertUnknown) ? ['<i>* לא ידוע אם הכבודה כלולה במחיר</i>'] : []),
+      '💡 לפתוח בגלישה בסתר, לוודא שהמזוודה כלולה, ולקנות מהר.',
+    ].join('\n'), TEST ? 'test-alert' : 'alert');
+  }
+
+  if (SUMMARY) {
+    const totalLine = total.usd
+      ? `סה״כ המסע${total.missing.length ? ` (בלי טיסה ${total.missing.join(', ')})` : ''}: <b>${fmtBoth(total.usd)}</b> · כל הנוסעים`
+      : 'סה״כ המסע: עוד אין מחיר';
+    await telegram([
+      ...testMark,
+      firstSearch ? `🔎 <b>תוצאות ראשונות</b> · ${title}` : `🌙 <b>סיכום יומי</b> · ${title}`,
+      ...([bagTxt, cabinTxt].filter(Boolean).length ? [`<i>${[bagTxt, cabinTxt].filter(Boolean).join(' · ')}</i>`] : []),
+      '',
+      legs.map((l) => l.summary).join('\n\n'),
+      '━━━━━━━━',
+      totalLine,
+      ...(ILS_PER_USD ? [`💱 שער היום: $1 = ₪${ILS_PER_USD.toFixed(2)}`] : []),
+      ...(legs.some((l) => l.summaryUnknown) ? ['<i>* לא ידוע אם הכבודה כלולה במחיר</i>'] : []),
+      ...(OWNER && errors.length ? [`⚠️ ${errors.length} חיפושים נכשלו (רק אתה רואה את זה · /errors)`] : []),
+      '', '<i>/status הגדרות · /stop הפסקה</i>',
+    ].join('\n'), kind);
+    markSummarySent();
+  }
+  writeLogs('prices', offersCount, STARTED);
+  saveState(state);
+}
+
 // ---------- main ----------
 async function getRates() {
   const res = await fetch('https://open.er-api.com/v6/latest/USD');
@@ -793,94 +1142,18 @@ async function main() {
   ILS_PER_USD = rates.rates.ILS || null;
 
   const browser = await chromium.launch(process.env.HTTPS_PROXY ? { proxy: { server: process.env.HTTPS_PROXY } } : {});
-  const t0 = Date.now();
-  const timed = (name, pr) => pr.then((r) => { console.log(`[${name}] ${r.results.length} results, ${r.errors.length} errors, ${Math.round((Date.now() - t0) / 1000)}s`); return r; });
-
-  // Kayak: every market x every task, a few pages at a time.
-  // Wide date ranges: each run checks a different slice of the Kayak windows (Kiwi always covers everything).
   state.kayakTurn = (state.kayakTurn || 0) + 1;
-  const tasks = kayakTasks(state.kayakTurn);
-  console.log(`kayak tasks per market: ${tasks.length}`);
-  const kayakJob = (async () => {
-    const jobs = CONFIG.markets.flatMap((m) => tasks.map((t) => ({ m, t })));
-    const blockedHosts = new Set(); // after a block, the rest of that site's searches in this run are skipped
-    const res = await pool(jobs, CONFIG.concurrency || 6, async ({ m, t }) => {
-      if (blockedHosts.has(m.host)) { logSearch('kayak', m.host, t.kind, 'skipped', 0, 0, 0, 'site blocked earlier in this run'); return { results: [], errors: [] }; }
-      try { return { results: await tracked('kayak', m.host, t.kind, () => kayakSearch(browser, m, t)), errors: [] }; } catch (e) {
-        if (e.blocked) blockedHosts.add(m.host);
-        return { results: [], errors: [`${m.label || m.host} ${t.kind}: ${e.message.split('\n')[0].slice(0, 80)}`] };
-      }
-    });
-    return { results: res.flatMap((r) => r.results), errors: res.flatMap((r) => r.errors) };
-  })();
-  const kiwiJob = CONFIG.kiwi === false ? Promise.resolve({ results: [], errors: [], slot: null }) : searchKiwi();
-  const outDates = dateRange(OUT.from, OUT.to);
-  // Google Flights once a day (with the daily summary), for every user, with the user's own filters.
-  const googleOn = SUMMARY && CONFIG.googleDaily !== false;
-  const googleJob = googleOn
-    ? (async () => {
-      const out = { results: [], errors: [] }; const gTasks = googleTasks(state.kayakTurn);
-      for (const gm of CONFIG.googleMarkets || []) { const r = await searchGoogle(browser, gm, gTasks); out.results.push(...r.results); out.errors.push(...r.errors); }
-      return out;
-    })()
-    : Promise.resolve({ results: [], errors: [] });
-  const duffelDue = OWNER && SIMPLE_PAX && !!OUT.airline && OUT.maxStops === 0 && !!(process.env.DUFFEL_TOKEN || '').trim()
-    && (!state.lastDuffelAt || (now - new Date(state.lastDuffelAt)) / 36e5 >= (CONFIG.duffelEveryHours || 8) - 0.5);
-  if (duffelDue) state.lastDuffelAt = now.toISOString();
-  const duffelJob = duffelDue ? searchDuffel(outDates) : Promise.resolve({ results: [], errors: [] });
-
-  const parts = await Promise.all([timed('kayak', kayakJob), timed('kiwi', kiwiJob), timed('google', googleJob), timed('duffel', duffelJob)]);
+  if (TRIP) { try { await mainTrip({ browser, state, now, rates, forceSummary, firstSearch, markSummarySent }); } finally { await browser.close().catch(() => {}); } return; }
+  const { offers, errors } = await searchAll(browser, state, now, rates);
   await browser.close();
-
-  const errors = parts.flatMap((p) => p.errors);
-  const valid = (list) => list
-    .map((o) => ({ ...o, usd: o.price / (rates.rates[o.currency] || NaN) }))
-    .filter((o) => Number.isFinite(o.usd))
-    .filter((o) => (o.kind === 'out' ? legOkOut(o.legs[0])
-      : o.kind === 'ret' ? legOkRet(o.legs[0])
-        : o.legs.length === 2 && legOkOut(o.legs[0]) && legOkRet(o.legs[1]) && pairOk(o.legs[0].date, o.legs[1].date)));
-  const offers = valid(parts.flatMap((p) => p.results));
-
-  // Cheapest one-way per date (kept apart by bag status), then all allowed combinations.
-  const cheapestBy = (kind, state) => {
-    const m = new Map();
-    for (const o of offers.filter((x) => x.kind === kind && bagState(x) === state)) if (!m.has(o.legs[0].date) || o.usd < m.get(o.legs[0].date).usd) m.set(o.legs[0].date, o);
-    return m;
-  };
-  const cands = [];
-  if (!RET) {
-    for (const wb of ['yes', 'unknown']) for (const [od, o] of cheapestBy('out', wb)) cands.push({ kind: 'ow', out: od, ret: null, usd: o.usd, offers: [o] });
-  } else {
-    for (const o of offers.filter((x) => x.kind === 'rt')) cands.push({ kind: 'rt', out: o.legs[0].date, ret: o.legs[1].date, usd: o.usd, offers: [o] });
-    // Every pairing of bag states, so a with-bag outbound can combine with an unknown-bag return and so on.
-    for (const so of ['yes', 'unknown']) for (const sr of ['yes', 'unknown']) {
-      const outBy = cheapestBy('out', so); const retBy = cheapestBy('ret', sr);
-      for (const [od, o] of outBy) for (const [rd, r] of retBy) if (pairOk(od, rd)) cands.push({ kind: 'mixed', out: od, ret: rd, usd: o.usd + r.usd, offers: [o, r] });
-    }
-  }
-  // Preferred airlines (per-user extra): also keep their own cheapest nonstop one-way per date, so a cheaper
-  // flight on another airline the same day does not hide them.
-  for (const code of PREFER) {
-    for (const wb of ['yes', 'unknown']) {
-      const m = new Map();
-      for (const o of offers.filter((x) => x.kind === 'out' && bagState(x) === wb && x.legs[0].stops === 0 && flies(x.legs[0], code))) if (!m.has(o.legs[0].date) || o.usd < m.get(o.legs[0].date).usd) m.set(o.legs[0].date, o);
-      if (!RET) for (const [od, o] of m) cands.push({ kind: 'ow', out: od, ret: null, usd: o.usd, offers: [o], prefer: code });
-    }
-  }
-  cands.sort((a, b) => a.usd - b.usd);
-  // One line per (kind, dates, bag known): a cheaper no-bag price must not hide the with-bag price of the same trip.
-  const seen = new Set();
-  const top = cands.filter((c) => { const k = `${c.kind}|${c.out}|${c.ret}|${c.offers.map(bagState).join(',')}|${c.prefer || ''}`; if (seen.has(k)) return false; seen.add(k); return true; });
+  const { top, best, bestBag, cands } = candidates(offers);
   if (process.env.DUMP_OFFERS) fs.writeFileSync(process.env.DUMP_OFFERS, JSON.stringify({ at: now.toISOString(), ils: ILS_PER_USD, offers }, null, 0));
-  const best = top[0];
-  const bestBag = top.find((c) => c.offers.every(bagReq)); // cheapest that meets the bag rule
-
   vlog(errors.map((e) => 'WARN ' + e).join('\n'));
   // Public logs: error kinds and counts only, with links (route, dates) removed.
   const errKinds = new Map();
   for (const e of errors) { const k = e.replace(/https?:\/\/\S+/g, '<link>').replace(/\d{4}-\d{2}-\d{2}/g, '<date>').slice(0, 140); errKinds.set(k, (errKinds.get(k) || 0) + 1); }
   for (const [k, n] of errKinds) console.log(`error x${n}: ${k}`);
-  console.log(`valid offers: ${offers.length}; combinations: ${cands.length}; errors: ${errors.length}`);
+  console.log(`valid offers: ${offers.length}; combinations: ${cands.length}; errors: ${errors.length}; cache hits: ${CACHE_HITS}`);
   top.slice(0, 8).forEach((c) => vlog(c.kind, c.out, '->', c.ret, fmtUsd(c.usd), c.offers.map((o) => `${o.source} ${fmtUsd(o.usd)}`).join(' + ')));
 
   state.lastRun = { at: now.toISOString(), ok: !!best, bestUsd: bestBag ? Math.round(bestBag.usd) : null, errors: errors.length };
@@ -895,7 +1168,7 @@ async function main() {
     return;
   }
 
-  const under = top.filter((c) => c.usd <= CONFIG.maxPriceUsd && c.offers.every(bagReq));
+  const under = top.filter((c) => c.usd <= CONFIG.maxPriceUsd && c.offers.every(bagReq) && canAlert(c));
   const last = state.lastAlert;
   const hoursSince = last ? (now - new Date(last.at)) / 36e5 : Infinity;
   const TEST = process.env.TEST_ALERT === '1'; // test runs always alert and do not touch the real alert history
@@ -925,7 +1198,7 @@ async function main() {
   // When Kayak gave nothing (it blocks automated searches from GitHub's servers), links to check it yourself.
   const kayakCount = offers.filter((o) => /kayak/i.test(o.url || '')).length;
   const kc = bestBag || best;
-  const kayakLinks = kayakCount ? '' : `🔎 לבדוק גם ב-Kayak בעצמך (±3 ימים): ${CONFIG.markets.map((m) => {
+  const kayakLinks = kayakCount ? '' : `🔎 לבדוק גם ב-Kayak בעצמך (±3 ימים): ${forHome(CONFIG.markets).map((m) => {
     const bag = m.bagFilter && CONFIG.checkedBags ? `bfc=${CONFIG.checkedBags}` : '';
     const kind = RET ? 'rt' : 'out';
     return `<a href="${kayakUrl(m.linkHost || m.host, kind, `${kc.out}-flexible-3days`, RET && kc.ret && `${kc.ret}-flexible-3days`, [kayakFs(kind), bag].filter(Boolean).join(';'))}">${m.label || m.host}</a>`;
@@ -965,4 +1238,4 @@ if (require.main === module) {
     process.exit(1);
   });
 }
-module.exports = { israelClock, preferredFirst, optionsText, flies, scrub, tracked, appendCsv, googleTfs, googleUrl, parseGoogleLabel, googleTasks, lowCostLinks, retryOnce, bagState, configFor, slotFrom, bagReq, bagOk, kayakUrlForTest: kayakUrl, pickDiverse, tripType, setIlsRate: (r) => { ILS_PER_USD = r; }, pairOk, legOkOut, legOkRet, parseKayakCards, candText, pickDistinct, searchCenters };
+module.exports = { homeCountry, forHome, googleBackoffUntil, tpOffer, kiwiQuery, canAlert, searchGoogle, useProfile, candidates, tripLegText, tripTotal, legShouldAlert, legSig, israelClock, preferredFirst, optionsText, flies, scrub, tracked, appendCsv, googleTfs, googleUrl, parseGoogleLabel, googleTasks, lowCostLinks, retryOnce, bagState, configFor, slotFrom, bagReq, bagOk, kayakUrlForTest: kayakUrl, pickDiverse, tripType, setIlsRate: (r) => { ILS_PER_USD = r; }, pairOk, legOkOut, legOkRet, parseKayakCards, candText, pickDistinct, searchCenters };
