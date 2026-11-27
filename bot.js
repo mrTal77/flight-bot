@@ -418,6 +418,7 @@ async function main() {
   const updates = updatesFile ? JSON.parse(fs.readFileSync(updatesFile, 'utf8'))
     : await tg('getUpdates', { offset: (db.botOffset || 0) + 1, timeout: 0, allowed_updates: ['message'] });
   const menuSet = await setCommandMenu(db);
+  if (!DRY && !updatesFile) await require('./lib/clicks').pullClicks(); // link clicks -> logs/clicks.csv (CLICKS-SETUP.md)
   if (!updates.length) { if (menuSet) store.saveUsers(db); console.log('no new messages'); return; }
   const today = new Date().toISOString().slice(0, 10);
   const toDispatch = [];

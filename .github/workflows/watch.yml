@@ -85,6 +85,8 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           DUFFEL_TOKEN: ${{ secrets.DUFFEL_TOKEN }}
+          CLICK_URL: ${{ secrets.CLICK_URL }}         # click counter (CLICKS-SETUP.md); empty = off
+          CLICK_SECRET: ${{ secrets.CLICK_SECRET }}
           MODE: ${{ needs.plan.outputs.mode }}
           USER_ID: ${{ matrix.user }}
         run: |
