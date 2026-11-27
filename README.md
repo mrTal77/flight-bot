@@ -20,12 +20,13 @@ Everything runs on free GitHub services: GitHub Actions (searches and the bot) a
   characters (many flights with many filters) does not fit in a Telegram link, so the page asks to paste `/start CODE`
   to the bot (up to 200 characters). In the chat: `/price 2 400` (flight 2) or `/price 400` (every flight); dates and
   places change through `/edit`. One ticket for the whole trip (multi-city) is planned for a later phase.
-- **Search** (`watch.js`, every 4 hours + one daily summary at 21:00 Israel time; a summary run outside 20:45–24:00 or a second one the same day runs as a plain check; a new user's first results come right away): one job per user, in parallel. Sources:
-  - Kayak in a headless browser, Israel (with Kayak's checked-bag filter) and Australia (prices in AUD, converted;
-    its bag filter has no effect, so bags show as unknown), "±3 days" grids: one-way outbound, one-way returns, and round trips.
+- **Search** (`watch.js`, every 4 hours + one daily summary at 21:00 on each user's own clock: the summary run starts every hour and searches only the users whose 21:00 has come; a summary run outside 20:45–24:00 local time or a second one the same day runs as a plain check; a new user's first results come right away): one job per user, in parallel. Sources:
+  - Kayak in a headless browser, chosen by the origin's country (`kayakByCountry`): from Israel, Israel (with Kayak's
+    checked-bag filter) and Australia (prices in AUD, converted; its bag filter has no effect, so bags show as unknown);
+    from the US, kayak.com; elsewhere the UK and Australia. "±3 days" grids: one-way outbound, one-way returns, and round trips.
   - Kiwi.com's public MCP server (`https://mcp.kiwi.com`, free): one-way, returns, round trips, and single tickets
     with the return on any airline (the outbound is pinned to the chosen airline's departure hours).
-  - Google Flights, once a day with the summary, for every user: the search link carries the user's filters
+  - Google Flights, once a day with the summary, for every user, in the origin's country (`gl`): the search link carries the user's filters
     (passengers, cabin, stops and airline per leg); up to `googleMaxSearches` dates or date pairs a day, spread over the range.
   - For the bot owner only: Duffel (optional `DUFFEL_TOKEN`).
   - A failed search is tried once more after a short pause.
@@ -35,6 +36,13 @@ Everything runs on free GitHub services: GitHub Actions (searches and the bot) a
 - Results are compared as one round-trip ticket vs. two separate tickets. An alert needs a price at or under the
   limit (per passenger). Prices where the bags are known to be missing are dropped; when it is unknown, the price is
   shown and marked with "*".
+
+## Languages, currencies and time zones
+
+Hebrew and English today. Every text is in `docs/locales/<code>.js` (one file per language, shared by the bot, the
+search messages and the page; English is the fallback). Prices show in US dollars and in the user's currency;
+the daily summary comes at 21:00 in the user's time zone. Chat: `/lang`, `/currency EUR`, `/tz Berlin`.
+How it works and how to add a language: `LANGUAGES.md`.
 
 ## Search log (debugging)
 
@@ -87,7 +95,9 @@ Everything runs on free GitHub services: GitHub Actions (searches and the bot) a
 | `maxUsers` | sign-ups are refused above this number |
 | `invites` | SHA-256 hashes of valid invite codes |
 | `realertDropUsd`, `realertHours` | when to alert again |
-| `markets` | Kayak sites; `bagFilter` makes prices include a checked bag |
+| `kayakSites`, `kayakByCountry` | Kayak sites, and which ones to search by the origin's country (`default` for the rest); `bagFilter` makes prices include a checked bag, `monthFirst` for sites that write dates month first |
+| `googleByOrigin`, `googleMarkets` | Google Flights searches with the origin's country; `googleMarkets` when it is off |
+| `summaryHour` | the daily summary's hour on each user's own clock (21) |
 | `kiwi`, `googleDaily`, `googleMaxSearches`, `duffelEveryHours` | sources on/off, Google searches a day |
 | `pausedUsers` | user ids that are paused: no searches and no messages; their settings and state stay (remove the id to turn them back on) |
 | `userExtras` | per user (random id): `preferAirlines` codes get their own nonstop Kiwi searches and are shown first (⭐) |

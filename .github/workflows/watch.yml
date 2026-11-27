@@ -4,11 +4,11 @@ name: flight-watch
 on:
   schedule:
     - cron: "17 2-22/4 * * *"   # every 4 hours (UTC)
-    - cron: "17 19 * * *"    # daily summary backup: 21:17 Israel (winter) / 22:17 (summer); cron-job.org sends it at 21:00
+    - cron: "47 * * * *"     # daily summary backup, every hour: each user gets it at 21:00 on their own clock (cron-job.org starts it hourly at :00)
   workflow_dispatch:
     inputs:
       mode:
-        description: "check | summary (one a day, evening) | first (new user's first results) | force-summary (test) | test-alert"
+        description: "check | summary (start it every hour: only users whose 21:00 has come) | first (new user's first results) | force-summary (test) | test-alert"
         default: "summary"
       user:
         description: "empty = all users · admins = only the admin (for testing; nobody else gets messages) · or one user id"
@@ -40,9 +40,11 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ONLY: ${{ github.event.inputs.user }}
-          MODE: ${{ github.event.inputs.mode || (github.event.schedule == '17 19 * * *' && 'summary' || 'check') }}
+          MODE: ${{ github.event.inputs.mode || (github.event.schedule == '47 * * * *' && 'summary' || 'check') }}
         run: |
-          echo "users=$(node lib/list-users.js "$ONLY")" >> "$GITHUB_OUTPUT"
+          # A summary run searches only the users whose daily summary is due now (21:00 on their own clock).
+          if [ "$MODE" = "summary" ]; then DUE="--summary-due"; else DUE=""; fi
+          echo "users=$(node lib/list-users.js "$ONLY" $DUE)" >> "$GITHUB_OUTPUT"
           echo "mode=$MODE" >> "$GITHUB_OUTPUT"
 
   search:

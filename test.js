@@ -361,3 +361,95 @@ console.log('kayak filter test passed');
   assert.equal(bot.isPaused({ id: 'u0000000001' }), false);
   console.log('trip bot tests passed');
 }
+
+// Languages, currencies and time zones (docs/i18n.js, docs/locales, docs/regions.js)
+{
+  const fs = require('fs'); const px = require('path');
+  const I = require('./docs/i18n.js'); const R = require('./docs/regions.js'); const C = require('./docs/codec.js');
+  C.setPlaces(JSON.parse(fs.readFileSync('./docs/airports.json', 'utf8')));
+  // every language: a file, a number in the code, a <script> in the page, and every English text key
+  const keys = (o, p = '') => Object.entries(o).flatMap(([k, v]) => (v && typeof v === 'object' && !Array.isArray(v) && v.other == null ? keys(v, p + k + '.') : [p + k]));
+  const files = fs.readdirSync('./docs/locales').filter((f) => f.endsWith('.js')).map((f) => f.slice(0, -3)).sort();
+  assert.deepEqual(files, [...I.AVAILABLE].sort(), 'every file in docs/locales is listed in i18n.js AVAILABLE');
+  const page = fs.readFileSync('./docs/index.html', 'utf8');
+  for (const code of I.AVAILABLE) {
+    assert.ok(C.LANGS.includes(code), `${code} has a number in the form code (codec.js LANGS)`);
+    assert.ok(page.includes(`<script src="locales/${code}.js">`), `${code} is loaded by the page`);
+    const missing = ['form', 'codec', 'bot', 'owner', 'search'].flatMap((s) => keys(I.get('en')[s], s + '.').filter((k) => I.t(code, k) === '' && I.t('en', k) !== ''));
+    assert.ok(!keys(I.get(code)).length || true);
+    const own = new Set(['form', 'codec', 'bot', 'owner', 'search'].flatMap((s) => keys(I.get(code)[s] || {}, s + '.')));
+    const absent = ['form', 'codec', 'bot', 'owner', 'search'].flatMap((s) => keys(I.get('en')[s], s + '.')).filter((k) => !own.has(k));
+    assert.deepEqual(code === 'en' ? [] : absent, [], `${code}: texts missing (they would show in English)`);
+    assert.deepEqual(missing, []);
+  }
+  // fallback, plurals, language tags
+  assert.equal(I.t('xx', 'bot.alreadyIn'), I.t('en', 'bot.alreadyIn'));
+  assert.equal(I.t('he', 'codec.adultsN', 1), '1 מבוגר'); assert.equal(I.t('he', 'codec.adultsN', 3), '3 מבוגרים');
+  assert.equal(I.t('en', 'codec.childrenN', 2), '2 children');
+  assert.deepEqual(['he-IL', 'iw', 'en-US', 'pt-BR', ''].map(I.resolve), ['he', 'he', 'en', 'en', 'en']);
+  assert.deepEqual([I.find('English'), I.find('עברית'), I.find('he'), I.find('klingon')], ['en', 'he', 'he', '']);
+  assert.deepEqual([I.money(1234.4, 'USD'), I.money(1000, 'ILS'), I.money(5, 'EUR'), I.money(9, 'CHF')], ['$1,234', '₪1,000', '€5', 'CHF 9']);
+  // every zone and currency is real; defaults from the origin
+  for (const z of R.ZONES.slice(1)) new Intl.DateTimeFormat('en', { timeZone: z });
+  assert.equal(new Set(R.ZONES).size, R.ZONES.length); assert.equal(new Set(R.CURRENCIES).size, R.CURRENCIES.length);
+  assert.deepEqual(C.localOf({ origin: 'TLV' }), { currency: 'ILS', tz: 'Asia/Jerusalem', country: 'IL' });
+  assert.deepEqual(C.localOf({ origin: 'LAX' }), { currency: 'USD', tz: 'America/Los_Angeles', country: 'US' });
+  assert.deepEqual(C.localOf({ origin: 'JFK', currency: 'EUR', tz: 'Europe/Berlin' }), { currency: 'EUR', tz: 'Europe/Berlin', country: 'US' });
+  assert.equal(R.findZone('berlin'), 'Europe/Berlin'); assert.equal(R.findZone('America/new_york'), 'America/New_York'); assert.equal(R.findZone('mars'), '');
+  assert.deepEqual(R.clock(new Date('2030-07-01T18:30:00Z'), 'America/New_York'), { day: '2030-07-01', minutes: 14 * 60 + 30 });
+  // the code carries language, currency and time zone; old v4/v5 codes still decode
+  const p = { invite: 'Ab3_x9', origin: 'ORD', destination: 'ATH', outFrom: '2030-11-14', outTo: '2030-11-20', retFrom: '2030-11-24', retTo: '2030-11-26', maxPrice: 300, lang: 'en', currency: 'USD', tz: 'America/Chicago' };
+  const code = C.encode(p); const q = C.decode(code);
+  assert.ok(code.length <= C.TG_MAX);
+  assert.deepEqual([q.lang, q.currency, q.tz], ['en', 'USD', 'America/Chicago']);
+  const auto = C.decode(C.encode({ ...p, currency: '', tz: '' }));
+  assert.deepEqual([auto.currency, auto.tz], [undefined, undefined], 'automatic stays automatic');
+  assert.ok(C.validate({ ...p, tz: 'Mars/Base' }, '2030-11-01', 'en').some((e) => /time zone/.test(e)));
+  assert.ok(C.validate({ ...p, currency: 'XXX' }, '2030-11-01', 'en').some((e) => /currency/.test(e)));
+  const v4 = C.decode('QBvf_H2a6gmcQAwAAAGG8gDAAEAGG_ABAAAJZ');
+  assert.deepEqual([v4.origin, v4.destination, v4.lang, v4.maxPrice, v4.currency], ['TLV', 'ATH', 'en', 300, undefined]);
+  const v5 = C.decode('UBvf_H2RgTXUKlCAW-MAHCibeuQIAA8');
+  assert.deepEqual([v5.trip, v5.lang, v5.legs.length, v5.legs[1].destination], [true, 'en', 2, 'CNX']);
+  const trip = C.decode(C.encode({ ...v5, tz: 'Asia/Bangkok', currency: 'THB' }));
+  assert.deepEqual([trip.tz, trip.currency, C.legPrefs(trip, 1).tz], ['Asia/Bangkok', 'THB', 'Asia/Bangkok']);
+  assert.ok(C.describe(q, 'en').join('\n').includes('🌍 Currency USD · time zone America/Chicago'));
+  console.log('language, currency and time zone tests passed');
+}
+
+// Markets by origin; the daily summary at 21:00 on each user's clock
+{
+  const W = require('./watch.js');
+  assert.deepEqual(W.marketsFor('IL').map((m) => m.key), ['il', 'au']);
+  assert.deepEqual(W.marketsFor('US').map((m) => m.key), ['us']);
+  assert.deepEqual(W.marketsFor('FR').map((m) => m.key), ['uk', 'au']);
+  assert.deepEqual(W.googleMarketsFor('US'), [{ gl: 'US' }]); assert.deepEqual(W.googleMarketsFor('IL'), [{ gl: 'IL' }]);
+  assert.equal(W.configFor({ origin: 'JFK', destination: 'LAX', outFrom: '2030-12-01', outTo: '2030-12-05', oneWay: true, maxPrice: 300 }).googleMarkets[0].gl, 'US');
+  // US Kayak writes dates month first
+  const us = 'Go to result details\n1/16\n12:05 – 10:15+1\nORD\n-\nATH\n1 stop\n15h 10m\nUnited\n$1,127\nEconomy\n';
+  assert.equal(W.parseKayakCards(us, 'USD', true)[0].legs[0].date.slice(5), '01-16');
+  const L = require('./lib/list-users.js');
+  const ny = { prefs: { origin: 'JFK' } }; const tlv = { prefs: { origin: 'TLV' } };
+  const at = new Date('2030-12-01T19:00:00Z'); // 21:00 in Israel, 14:00 in New York
+  assert.deepEqual([L.summaryDue(tlv, {}, at), L.summaryDue(ny, {}, at)], [true, false]);
+  assert.equal(L.summaryDue(tlv, { lastSummaryDay: '2030-12-01' }, at), false, 'one summary a day');
+  assert.equal(L.summaryDue(ny, {}, new Date('2030-12-02T02:00:00Z')), true, '21:00 in New York');
+  console.log('market and summary time tests passed');
+}
+
+// Search messages in English for a US user (a separate run: watch.js reads its user when it loads)
+{
+  const os = require('os'); const fsx = require('fs'); const px = require('path'); const { execFileSync } = require('child_process');
+  const dir = fsx.mkdtempSync(px.join(os.tmpdir(), 'en-'));
+  const prof = px.join(dir, 'p.json');
+  fsx.writeFileSync(prof, JSON.stringify({ id: 'test', prefs: { origin: 'JFK', destination: 'ATH', outFrom: '2030-12-16', outTo: '2030-12-20', oneWay: true, maxPrice: 600, lang: 'en', checkedBags: 1, carryOn: 1 } }));
+  const script = px.join(dir, 's.js');
+  fsx.writeFileSync(script, `const W = require(${JSON.stringify(px.resolve('watch.js'))});
+const o = { kind: 'out', usd: 450, source: 'kiwi.com', url: 'https://k', bags: [1, 1], legs: [{ date: '2030-12-17', time: '18:00 – 11:00+1', stops: 1, hours: 10.5, airline: 'El Al Israel Airlines' }] };
+console.log(JSON.stringify({ c: W.candText({ kind: 'ow', out: '2030-12-17', usd: 450, offers: [o] }, 0), type: W.tripType({ kind: 'ow', offers: [o] }), local: W.LOCAL, lang: W.LANG }));`);
+  const out = JSON.parse(execFileSync(process.execPath, [script, '--profile', prof], { env: { ...process.env, TELEGRAM_BOT_TOKEN: 'x' } }).toString());
+  assert.equal(out.lang, 'en'); assert.deepEqual([out.local.currency, out.local.tz], ['USD', 'America/New_York']);
+  assert.ok(!/[֐-׿]/.test(out.c), out.c);
+  assert.ok(out.c.includes('Book on kiwi.com') && out.c.includes('Thu 19 Dec') === false && out.c.includes('Tue 17 Dec') && out.c.includes('1 stop') && out.c.includes('checked bag included'), out.c);
+  assert.equal(out.type, 'One way');
+  console.log('English search message tests passed');
+}

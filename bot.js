@@ -13,6 +13,8 @@ const fs = require('fs');
 const path = require('path');
 const store = require('./lib/store');
 const codec = require('./docs/codec.js');
+const I18n = require('./docs/i18n.js');
+const Regions = require('./docs/regions.js');
 
 const CONFIG = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
 const argv = process.argv.slice(2);
@@ -24,113 +26,43 @@ const PENDING = path.join(process.env.RUNNER_TEMP || require('os').tmpdir(), 'fl
 
 const AIRPORTS = JSON.parse(fs.readFileSync(path.join(__dirname, 'docs', 'airports.json'), 'utf8'));
 codec.setPlaces(AIRPORTS);
-const d = (iso) => `${Number(iso.slice(8))}.${Number(iso.slice(5, 7))}.${iso.slice(0, 4)}`;
+const d = (iso, lang) => I18n.fullDate(lang || 'he', iso);
 const esc = (t) => String(t || '').replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
 
-// ---------- texts (Hebrew / English) ----------
-const TX = {
-  he: {
-    help: [
-      'הבוט מחפש עבורך טיסות כל כמה שעות, שולח התראה כשהמחיר יורד מתחת לסף שבחרת, וסיכום פעם ביום.',
-      '',
-      '<b>שינוי הגדרות בצ׳אט:</b>',
-      '/price 900 · סף מחיר חדש (בדולרים, לנוסע)',
-      '/dest אתונה · יעד חדש (שם או קוד)',
-      '/out 21.12 3 · תאריך הלוך, אפשר עם גמישות בימים (או טווח: 20.12-30.12)',
-      '/back 10.1 3 · תאריך חזור, באותה צורה',
-      '/edit · קישור לטופס עם כל ההגדרות שלך, לשינוי של כל השאר',
-      '',
-      '/status · ההגדרות שלך והמחיר הכי טוב שנמצא',
-      '/lang en · English',
-      '/stop · הפסקת החיפוש ומחיקת הפרטים שלך',
-    ].join('\n'),
-    ownerHelp: '/users · רשימת המשתמשים (רק לך)\n/errors · יומן החיפושים שנכשלו (רק לך; /errors 72 ל-72 שעות)',
-    notRegistered: '👋 כדי להירשם צריך לפתוח את קישור ההרשמה שקיבלת, למלא את פרטי הטיסה וללחוץ "אישרתי".',
-    alreadyIn: '👋 אתה כבר רשום.',
-    badCode: '⚠️ הקוד בקישור לא תקין. נסה למלא את הטופס שוב.',
-    badInvite: '⚠️ קוד ההזמנה לא תקף. בקש קישור הרשמה חדש.',
-    problems: '⚠️ יש בעיה בפרטים:', fillAgain: 'מלא את הטופס שוב.', full: '😕 הבוט מלא כרגע. נסה שוב בהמשך.',
-    registered: '✅ <b>נרשמת בהצלחה!</b>', updated: '✅ <b>ההגדרות עודכנו!</b> (ההגדרות הקודמות הוחלפו)',
-    firstSearch: 'החיפוש מתחיל עכשיו, והתוצאות יגיעו לכאן בעוד כ-10 דקות. אחר כך אבדוק כל כמה שעות ואשלח סיכום פעם ביום ב-21:00.',
-    stopped: '🛑 החיפוש הופסק והפרטים שלך נמחקו. אפשר להירשם שוב בכל זמן דרך קישור ההרשמה.',
-    best: '💰 הזול ביותר בבדיקה האחרונה: ${a}', noRunYet: '⏳ עוד לא הסתיימה בדיקה.',
-    editLink: '✏️ <b>עדכון הגדרות</b>\nהקישור פותח את הטופס עם כל ההגדרות הנוכחיות שלך. משנים מה שרוצים, לוחצים "שמירת השינויים", וההגדרות החדשות מחליפות את הקודמות.\n\n<a href="{a}">פתיחת הטופס שלי</a>',
-    priceUsage: 'כך משנים מחיר: <code>/price 900</code> (בדולרים, לנוסע)',
-    destUsage: 'כך משנים יעד: <code>/dest אתונה</code> או <code>/dest ATH</code>',
-    dateUsage: 'כך משנים תאריך: <code>/{a} 21.12 3</code> (בערך 21.12, ±3 ימים), <code>/{a} 21.12</code> (בדיוק), או טווח <code>/{a} 20.12-30.12</code>',
-    noReturn: 'החיפוש שלך הוא בכיוון אחד. כדי להוסיף חזור, פתח את הטופס עם /edit.',
-    notFound: 'לא מצאתי יעד בשם "{a}". נסה שם אחר באנגלית או קוד בן 3 אותיות.',
-    choose: 'מצאתי כמה אפשרויות. שלח את הפקודה של היעד שרצית:\n{a}',
-    langSet: '✅ השפה עודכנה לעברית.',
-    unknown: 'לא הבנתי. הנה מה שאפשר לעשות:',
-    tripHelp: '<b>במסע:</b> <code>/price 2 400</code> · סף חדש לטיסה 2 (<code>/price 400</code> משנה את כל הטיסות). תאריכים ויעדים משנים דרך /edit.',
-    tripEdit: 'במסע משנים תאריכים ויעדים דרך הטופס: /edit',
-    tripPriceUsage: 'כך משנים מחיר במסע: <code>/price 2 400</code> (טיסה 2, בדולרים לנוסע), או <code>/price 400</code> לכל הטיסות.',
-    noLeg: 'אין במסע טיסה מספר {a}.',
-    bestLeg: '💰 הזול ביותר בבדיקה האחרונה:',
-    paused: '⏸️ החיפוש שלך מושהה כרגע, ולא יישלחו התראות או סיכומים. ההגדרות שלך שמורות.',
-  },
-  en: {
-    help: [
-      'The bot searches flights for you every few hours, alerts you when the price drops below your limit, and sends a daily summary.',
-      '',
-      '<b>Change settings in the chat:</b>',
-      '/price 900 · new price limit (USD, per passenger)',
-      '/dest Athens · new destination (name or code)',
-      '/out 21.12 3 · outbound date, optionally ± days (or a range: 20.12-30.12)',
-      '/back 10.1 3 · return date, the same way',
-      '/edit · link to the form with all your settings, to change anything else',
-      '',
-      '/status · your settings and the best price found',
-      '/lang he · עברית',
-      '/stop · stop searching and delete your details',
-    ].join('\n'),
-    ownerHelp: '/users · list of users (only you)\n/errors · log of failed searches (only you; /errors 72 for 72 hours)',
-    notRegistered: '👋 To sign up, open the sign-up link you received, fill in your flight and tap "Confirm".',
-    alreadyIn: '👋 You are already signed up.',
-    badCode: '⚠️ The code in the link is not valid. Please fill in the form again.',
-    badInvite: '⚠️ The invite code is not valid. Ask for a new sign-up link.',
-    problems: '⚠️ There is a problem with the details:', fillAgain: 'Please fill in the form again.', full: '😕 The bot is full right now. Please try again later.',
-    registered: '✅ <b>You are signed up!</b>', updated: '✅ <b>Settings updated!</b> (the previous settings were replaced)',
-    firstSearch: 'The search starts now; results arrive here in about 10 minutes. After that I check every few hours and send a daily summary at 21:00 (Israel time).',
-    stopped: '🛑 Search stopped and your details were deleted. You can sign up again any time with the sign-up link.',
-    best: '💰 Best price in the last check: ${a}', noRunYet: '⏳ No check has finished yet.',
-    editLink: '✏️ <b>Update settings</b>\nThe link opens the form with all your current settings. Change what you want, tap "Save changes", and the new settings replace the old ones.\n\n<a href="{a}">Open my form</a>',
-    priceUsage: 'To change the price: <code>/price 900</code> (USD, per passenger)',
-    destUsage: 'To change the destination: <code>/dest Athens</code> or <code>/dest ATH</code>',
-    dateUsage: 'To change a date: <code>/{a} 21.12 3</code> (around 21.12, ±3 days), <code>/{a} 21.12</code> (exact), or a range <code>/{a} 20.12-30.12</code>',
-    noReturn: 'Your search is one way. To add a return, open the form with /edit.',
-    notFound: 'I could not find a destination called "{a}". Try another name or a 3-letter code.',
-    choose: 'I found several options. Send the command of the one you want:\n{a}',
-    langSet: '✅ Language set to English.',
-    unknown: 'I did not understand. Here is what you can do:',
-    tripHelp: '<b>In a trip:</b> <code>/price 2 400</code> · new limit for flight 2 (<code>/price 400</code> changes every flight). Change dates and places with /edit.',
-    tripEdit: 'In a trip, change dates and places in the form: /edit',
-    tripPriceUsage: 'To change a price in a trip: <code>/price 2 400</code> (flight 2, USD per passenger), or <code>/price 400</code> for every flight.',
-    noLeg: 'There is no flight number {a} in your trip.',
-    bestLeg: '💰 Best prices in the last check:',
-    paused: '⏸️ Your search is paused right now: no alerts or summaries. Your settings are saved.',
-  },
-};
-const tx = (lang, key, a) => (TX[lang === 'en' ? 'en' : 'he'][key] || '').split('{a}').join(a == null ? '' : a);
+// ---------- texts ----------
+// Every text is in docs/locales/<language>.js (section "bot" for users, "owner" for the bot owner). See LANGUAGES.md.
+const tx = (lang, key, a, b) => I18n.t(lang, 'bot.' + key, a, b);
+const ox = (lang, key, ...args) => I18n.t(lang, 'owner.' + key, ...args);
 const prefsText = (p) => codec.describe(p, p.lang || 'he').join('\n');
-function routeOf(p) {
-  if (!codec.isTrip(p)) return `${codec.placeName(p.origin)} ${p.oneWay ? '→' : '⇄'} ${codec.placeName(p.destination)}`;
-  const parts = [codec.placeName(p.legs[0].origin)]; // a flight that does not start where the last one landed: its origin in brackets
-  p.legs.forEach((l, i) => { if (i && l.origin !== p.legs[i - 1].destination) parts.push(`(${codec.placeName(l.origin)})`); parts.push(codec.placeName(l.destination)); });
-  return `מסע: ${parts.join(' → ')}`;
+const SUMMARY_AT = `${String(CONFIG.summaryHour ?? 21).padStart(2, '0')}:00`; // the daily summary, in each user's own time
+function routeOf(p, lang = 'he') {
+  const n = (c) => codec.placeName(c, lang);
+  if (!codec.isTrip(p)) return `${n(p.origin)} ${p.oneWay ? '→' : '⇄'} ${n(p.destination)}`;
+  const parts = [n(p.legs[0].origin)]; // a flight that does not start where the last one landed: its origin in brackets
+  p.legs.forEach((l, i) => { if (i && l.origin !== p.legs[i - 1].destination) parts.push(`(${n(l.origin)})`); parts.push(n(l.destination)); });
+  return tx(lang, 'tripRoute', parts.join(' → '));
 }
 // Users the owner paused (config.json "pausedUsers"): their data stays, but nothing is searched or sent.
 const isPaused = (u) => !!u && (CONFIG.pausedUsers || []).includes(u.id);
-function userLine(u) { // one short line about a user's search, for the owner (Hebrew)
+// The owner reads owner messages in their own language (Hebrew until the owner has signed up).
+const ownerLang = (db) => { const o = db && Object.values(db.users || {}).find((u) => u.owner); return (o && o.prefs && o.prefs.lang) || 'he'; };
+function userLine(u, lang = 'he') { // one short line about a user's search, for the owner
+  const loc = codec.localOf(u.prefs);
+  const local = ox(lang, 'local', `${loc.currency} · ${loc.tz}`);
   if (codec.isTrip(u.prefs)) {
     const t = u.prefs; const legs = t.legs.map((_, i) => codec.legPrefs(t, i));
-    return `🧳 ${routeOf(t)} · ${legs.length} טיסות · ${d(legs[0].outFrom)}–${d(legs[legs.length - 1].outTo)} · ספים ${legs.map((l) => `$${l.maxPrice.toLocaleString('en-US')}`).join('/')}`;
+    return ox(lang, 'lineTrip', routeOf(t, lang), legs.length, d(legs[0].outFrom, lang), d(legs[legs.length - 1].outTo, lang), legs.map((l) => `$${l.maxPrice.toLocaleString('en-US')}`).join('/')) + local;
   }
   const p = codec.withDefaults(u.prefs);
   const pax = p.adults + p.children + p.infants;
-  const dates = p.oneWay ? d(p.outFrom) : `${d(p.outFrom)} → ${d(p.retFrom)}`;
-  return `✈️ ${routeOf(p)} · ${dates}${pax > 1 ? ` · ${pax} נוסעים` : ''} · סף $${p.maxPrice.toLocaleString('en-US')}`;
+  const dates = p.oneWay ? d(p.outFrom, lang) : `${d(p.outFrom, lang)} → ${d(p.retFrom, lang)}`;
+  return ox(lang, 'lineOne', routeOf(p, lang), dates, pax > 1 ? ox(lang, 'paxN', pax) : '', `$${p.maxPrice.toLocaleString('en-US')}`) + local;
+}
+// "$1,000 (€920)" with the rate the last search saved; "$1,000" when the user's currency is USD or no rate is known.
+function priceText(usd, prefs, st) {
+  const cur = codec.localOf(prefs).currency; const rate = st && st.rates && st.rates.rates && st.rates.rates[cur];
+  const base = `$${Math.round(usd).toLocaleString('en-US')}`;
+  return cur !== 'USD' && rate ? `${base} (${I18n.money(usd * rate, cur)})` : base;
 }
 
 // ---------- Telegram ----------
@@ -218,12 +150,12 @@ function findPlaces(q) {
   return (exacts.length ? exacts : hits).slice(0, 6).map((x) => x.r);
 }
 
-// Commands may be in English or Hebrew, with or without "/".
-const ALIASES = {
-  start: ['start'], stop: ['stop', 'עצור', 'הפסק'], status: ['status', 'סטטוס', 'מצב'], edit: ['edit', 'עריכה', 'עדכון', 'טופס'],
-  price: ['price', 'מחיר', 'סף'], dest: ['dest', 'destination', 'יעד'], out: ['out', 'הלוך'], back: ['back', 'return', 'חזור'],
-  lang: ['lang', 'language', 'שפה'], help: ['help', 'עזרה'], users: ['users', 'משתמשים'], errors: ['errors', 'שגיאות'],
-};
+// Commands may be typed with or without "/", in English or in any language that names them (locale "commands").
+const COMMANDS = ['start', 'stop', 'status', 'edit', 'price', 'dest', 'out', 'back', 'lang', 'help', 'users', 'errors', 'currency', 'tz'];
+const ALIASES = Object.fromEntries(COMMANDS.map((cmd) => [cmd, [cmd, ...I18n.list().flatMap(({ code }) => {
+  const c = I18n.get(code).commands || {};
+  return [...(c[cmd] || []), ...(cmd === 'dest' ? c.destination || [] : [])];
+}).map((w) => w.toLowerCase())]]));
 function parseCommand(text) {
   const m = text.match(/^\/?([^\s@]+)(?:@\S+)?\s*([\s\S]*)$/);
   if (!m) return null;
@@ -231,6 +163,8 @@ function parseCommand(text) {
   for (const [cmd, names] of Object.entries(ALIASES)) if (names.includes(word)) return { cmd, arg: m[2].trim() };
   return null;
 }
+
+const firstSearchText = (p) => tx(p.lang || 'he', 'firstSearch', SUMMARY_AT, codec.localOf(p).tz);
 
 // ---------- applying a change from the chat ----------
 // The new settings replace the user's settings; the search restarts (fresh state if the route or dates changed).
@@ -247,8 +181,8 @@ async function saveChange(db, user, newPrefs, todayIso, toDispatch, resetSearch)
     store.saveState(user.id, st);
   }
   if (!isPaused(user)) toDispatch.push(user.id);
-  await reply(user.chatId, `${tx(lang, 'updated')}\n\n${prefsText(newPrefs)}\n\n${isPaused(user) ? tx(lang, 'paused') : tx(lang, 'firstSearch')}`);
-  if (!user.owner) await notifyOwner(`✏️ <b>משתמש עדכן הגדרות</b>: ${esc(user.name) || 'ללא שם'}\n${userLine(user)}`);
+  await reply(user.chatId, `${tx(lang, 'updated')}\n\n${prefsText(newPrefs)}\n\n${isPaused(user) ? tx(lang, 'paused') : firstSearchText(newPrefs)}`);
+  if (!user.owner) { const OL = ownerLang(db); await notifyOwner(ox(OL, 'updated', esc(user.name) || ox(OL, 'noName'), userLine(user, OL))); }
 }
 
 async function handle(db, msg, todayIso, toDispatch) {
@@ -258,7 +192,8 @@ async function handle(db, msg, todayIso, toDispatch) {
   const text = (msg.text || '').trim();
   const existing = Object.values(db.users).find((u) => u.chatId === chatId); // one user per chat
   const tgLang = msg.from && msg.from.language_code;
-  const lang = existing ? (existing.prefs.lang || 'he') : (!tgLang || /^(he|iw)/.test(tgLang) ? 'he' : 'en');
+  const lang = existing ? (existing.prefs.lang || 'he') : I18n.resolve(tgLang);
+  const OL = ownerLang(db);
   const help = (u, L) => tx(L, 'help') + (u && codec.isTrip(u.prefs) ? '\n\n' + tx(L, 'tripHelp') : '') + (u && u.owner ? '\n' + tx(L, 'ownerHelp') : '');
 
   // The sign-up code arrives as "/start CODE" (Start button) or pasted as "/start CODE" / "CODE" by hand.
@@ -289,28 +224,28 @@ async function handle(db, msg, todayIso, toDispatch) {
     CURRENT.user = user.id; CURRENT.type = existing ? 'update' : 'signup';
     const paused = isPaused(user);
     if (!paused) toDispatch.push(user.id);
-    if (!user.owner) await notifyOwner(`👤 <b>${existing ? 'משתמש עדכן הגדרות' : 'משתמש חדש נרשם'}</b>: ${esc(user.name) || 'ללא שם'}${paused ? ' (מושהה: כדי להפעיל אותו מחדש, להוציא אותו מ-pausedUsers ב-config.json)' : ''}\n${userLine(user)}\nסה״כ משתמשים: ${Object.keys(db.users).length}`);
-    await reply(chatId, `${existing ? tx(L, 'updated') : tx(L, 'registered')}\n\n${prefsText(prefs)}\n\n${paused ? tx(L, 'paused') : tx(L, 'firstSearch')}\n\n${help(user, L)}`);
+    if (!user.owner) await notifyOwner(ox(OL, existing ? 'signupUpdate' : 'signup', esc(user.name) || ox(OL, 'noName'), paused ? ox(OL, 'pausedNote') : '', userLine(user, OL), Object.keys(db.users).length));
+    await reply(chatId, `${existing ? tx(L, 'updated') : tx(L, 'registered')}\n\n${prefsText(prefs)}\n\n${paused ? tx(L, 'paused') : firstSearchText(prefs)}\n\n${help(user, L)}`);
     return;
   }
 
   if (c && c.cmd === 'errors' && OWNER_CHAT && chatId === OWNER_CHAT) { // owner only: the search log
     const hours = Math.min(24 * 14, Number(c.arg) || 24);
     const repo = process.env.GITHUB_REPOSITORY || 'mrTal77/flight-bot';
-    await reply(chatId, `${require('./lib/logs').summarize(hours)}\n\nהטבלאות המלאות: <a href="https://github.com/${repo}/blob/main/logs/searches.csv">חיפושים שנכשלו</a> · <a href="https://github.com/${repo}/blob/main/logs/runs.csv">ריצות</a>`);
+    await reply(chatId, `${require('./lib/logs').summarize(hours)}\n\n${ox(OL, 'logLinks', `https://github.com/${repo}/blob/main/logs/searches.csv`, `https://github.com/${repo}/blob/main/logs/runs.csv`)}`);
     return;
   }
 
   if (c && c.cmd === 'users' && OWNER_CHAT && chatId === OWNER_CHAT) {
     const list = Object.values(db.users).sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
-    if (!list.length) { await reply(chatId, 'אין משתמשים רשומים כרגע.'); return; }
+    if (!list.length) { await reply(chatId, ox(OL, 'noUsers')); return; }
     const rows = list.map((u, i) => {
       const st = store.loadState(u.id);
-      const best = st.lastRun && st.lastRun.bestUsd ? `$${st.lastRun.bestUsd.toLocaleString('en-US')}${codec.isTrip(u.prefs) ? ' (כל המסע)' : ''}` : 'עוד אין';
-      const last = st.lastRun ? d(st.lastRun.at.slice(0, 10)) : '—';
-      return `${i + 1}. <b>${esc(u.name) || 'ללא שם'}</b>${u.owner ? ' (אתה)' : ''}${isPaused(u) ? ' ⏸️ מושהה' : ''} · נרשם ${d(u.createdAt.slice(0, 10))}\n${userLine(u)}\n💰 הזול ביותר: ${best} · בדיקה אחרונה: ${last}`;
+      const best = st.lastRun && st.lastRun.bestUsd ? `$${st.lastRun.bestUsd.toLocaleString('en-US')}${codec.isTrip(u.prefs) ? ox(OL, 'wholeTrip') : ''}` : ox(OL, 'none');
+      const last = st.lastRun ? d(st.lastRun.at.slice(0, 10), OL) : '—';
+      return `${ox(OL, 'userRow', i + 1, esc(u.name) || ox(OL, 'noName'), u.owner ? ox(OL, 'you') : '', isPaused(u) ? ox(OL, 'pausedMark') : '', d(u.createdAt.slice(0, 10), OL), userLine(u, OL))}\n${ox(OL, 'userRow2', best, last)}`;
     });
-    await reply(chatId, `👥 <b>${list.length} משתמשים</b> (מקסימום ${CONFIG.maxUsers})\n\n${rows.join('\n\n')}`);
+    await reply(chatId, `${ox(OL, 'usersHead', list.length, CONFIG.maxUsers)}\n\n${rows.join('\n\n')}`);
     return;
   }
 
@@ -324,7 +259,7 @@ async function handle(db, msg, todayIso, toDispatch) {
       delete db.users[u.id];
       store.deleteState(u.id);
       await reply(chatId, tx(lang, 'stopped'));
-      if (!u.owner) await notifyOwner(`👋 משתמש הפסיק: ${esc(u.name) || 'ללא שם'} (${routeOf(u.prefs)}). נשארו ${Object.keys(db.users).length} משתמשים.`);
+      if (!u.owner) await notifyOwner(ox(OL, 'stopped', esc(u.name) || ox(OL, 'noName'), routeOf(u.prefs, OL), Object.keys(db.users).length));
       return;
     }
     case 'status': {
@@ -332,9 +267,9 @@ async function handle(db, msg, todayIso, toDispatch) {
       let best;
       if (trip) {
         const legs = st.legs || [];
-        best = st.lastRun ? [tx(lang, 'bestLeg'), ...u.prefs.legs.map((_, i) => `${i + 1}. ${legs[i] && legs[i].bestUsd ? `$${legs[i].bestUsd.toLocaleString('en-US')}` : '—'}`)].join('\n') : tx(lang, 'noRunYet');
-      } else best = st.lastRun && st.lastRun.bestUsd ? tx(lang, 'best', st.lastRun.bestUsd.toLocaleString('en-US')) : tx(lang, 'noRunYet');
-      await reply(chatId, `${prefsText(u.prefs)}\n\n${best}${isPaused(u) ? `\n\n${tx(lang, 'paused')}` : ''}\n\n${trip ? '/edit · /price' : '/edit · /price · /dest · /out · /back'}`);
+        best = st.lastRun ? [tx(lang, 'bestLeg'), ...u.prefs.legs.map((_, i) => `${i + 1}. ${legs[i] && legs[i].bestUsd ? priceText(legs[i].bestUsd, u.prefs, st) : '—'}`)].join('\n') : tx(lang, 'noRunYet');
+      } else best = st.lastRun && st.lastRun.bestUsd ? tx(lang, 'best', priceText(st.lastRun.bestUsd, u.prefs, st)) : tx(lang, 'noRunYet');
+      await reply(chatId, `${prefsText(u.prefs)}\n\n${best}${isPaused(u) ? `\n\n${tx(lang, 'paused')}` : ''}\n\n${trip ? '/edit · /price' : '/edit · /price · /dest · /out · /back'} · /currency · /tz · /lang`);
       return;
     }
     case 'edit': {
@@ -342,10 +277,27 @@ async function handle(db, msg, todayIso, toDispatch) {
       await reply(chatId, tx(lang, 'editLink', esc(url)));
       return;
     }
-    case 'lang': {
-      const L = /^(en|english|אנגלית)$/i.test(c.arg) ? 'en' : /^(he|hebrew|עברית)$/i.test(c.arg) ? 'he' : (lang === 'he' ? 'en' : 'he');
+    case 'lang': { // "/lang en", "/lang English"; "/lang" alone lists the languages
+      const L = I18n.find(c.arg);
+      if (!L) { await reply(chatId, tx(lang, 'langList', I18n.list().map((x) => `<code>/lang ${x.code}</code> · ${x.name}`).join('\n'))); return; }
       u.prefs = { ...u.prefs, lang: L }; db.users[u.id] = u;
       await reply(chatId, tx(L, 'langSet'));
+      return;
+    }
+    case 'currency': { // "/currency EUR": prices are shown in USD and in this currency
+      const cur = (c.arg || '').trim().toUpperCase();
+      if (!Regions.isCurrency(cur)) { await reply(chatId, tx(lang, 'currencyUsage', Regions.CURRENCIES.slice(1).join(' '), codec.localOf(u.prefs).currency)); return; }
+      u.prefs = { ...u.prefs, currency: cur }; db.users[u.id] = u;
+      await reply(chatId, tx(lang, 'currencySet', cur));
+      return;
+    }
+    case 'tz': { // "/tz Europe/Berlin" or "/tz Berlin": the daily summary comes at 21:00 on this clock
+      // a zone name ("Europe/Berlin", "Berlin"), or a city or airport ("TLV", "Tel Aviv") -> the zone of that place
+      let z = Regions.findZone(c.arg);
+      if (!z && c.arg) { const f = findPlaces(c.arg); if (f.length) z = Regions.zoneOf(f[0][3], f[0][0]); }
+      if (!z) { await reply(chatId, tx(lang, 'tzUsage', codec.localOf(u.prefs).tz)); return; }
+      u.prefs = { ...u.prefs, tz: z }; db.users[u.id] = u;
+      await reply(chatId, tx(lang, 'tzSet', z, SUMMARY_AT));
       return;
     }
     case 'price': {
@@ -369,7 +321,7 @@ async function handle(db, msg, todayIso, toDispatch) {
       const found = findPlaces(c.arg);
       if (!found.length) { await reply(chatId, tx(lang, 'notFound', esc(c.arg))); return; }
       if (found.length > 1) {
-        const list = found.map((r) => `<code>/dest ${r[0]}</code> · ${esc(lang === 'en' ? r[1] : (r[5] || r[1]))} (${esc(r[2])})`).join('\n');
+        const list = found.map((r) => `<code>/dest ${r[0]}</code> · ${esc(codec.placeName(r[0], lang))} (${esc(r[2])})`).join('\n');
         await reply(chatId, tx(lang, 'choose', list)); return;
       }
       await saveChange(db, u, { ...u.prefs, destination: found[0][0] }, todayIso, toDispatch, true);
@@ -393,20 +345,15 @@ async function handle(db, msg, todayIso, toDispatch) {
   }
 }
 
-// The "/" menu in Telegram (Hebrew by default, English for English-language Telegram apps). Set once per version.
-const MENU_VERSION = 1;
-const MENU = {
-  he: [['status', 'ההגדרות שלי והמחיר הכי טוב'], ['edit', 'עריכת ההגדרות בטופס'], ['price', 'סף מחיר חדש, למשל /price 900'], ['dest', 'יעד חדש, למשל /dest אתונה'],
-    ['out', 'תאריך הלוך, למשל /out 21.12 3'], ['back', 'תאריך חזור, למשל /back 10.1 3'], ['lang', 'English'], ['help', 'עזרה'], ['stop', 'הפסקה ומחיקת הפרטים']],
-  en: [['status', 'My settings and the best price'], ['edit', 'Edit my settings in the form'], ['price', 'New price limit, e.g. /price 900'], ['dest', 'New destination, e.g. /dest Athens'],
-    ['out', 'Outbound date, e.g. /out 21.12 3'], ['back', 'Return date, e.g. /back 10.1 3'], ['lang', 'עברית'], ['help', 'Help'], ['stop', 'Stop and delete my details']],
-};
+// The "/" menu in Telegram, from each language file ("menu"): English by default, and each language for Telegram
+// apps set to it. Set again when the version changes.
+const MENU_VERSION = 2;
 async function setCommandMenu(db) {
   if (DRY || db.menuVersion === MENU_VERSION) return false;
   try {
-    const cmds = (L) => MENU[L].map(([command, description]) => ({ command, description }));
-    await tg('setMyCommands', { commands: cmds('he') });
-    await tg('setMyCommands', { commands: cmds('en'), language_code: 'en' });
+    const cmds = (L) => I18n.get(L).menu.map(([command, description]) => ({ command, description }));
+    await tg('setMyCommands', { commands: cmds('en') });
+    for (const { code } of I18n.list()) await tg('setMyCommands', { commands: cmds(code), language_code: code });
     db.menuVersion = MENU_VERSION;
     return true;
   } catch (e) { console.log('command menu not set'); return false; }
@@ -456,4 +403,4 @@ async function startPending() {
 }
 
 if (require.main === module) (argv.includes('--start-searches') ? startPending() : argv.includes('--owner-start') ? ownerStart(argv[argv.indexOf('--owner-start') + 1] || '') : main()).catch((e) => { console.error('ERROR', e.message); process.exit(1); });
-module.exports = { prefsText, parseDates, parseDate, findPlaces, parseCommand, handle, routeOf, userLine, isPaused };
+module.exports = { prefsText, parseDates, parseDate, findPlaces, parseCommand, handle, routeOf, userLine, isPaused, priceText, ownerLang };
