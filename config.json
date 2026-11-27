@@ -1,6 +1,16 @@
 {
   "botUsername": "Ffffffflightticketbot",
-  "maxUsers": 10,
+  "signup": {
+    "mode": "open",
+    "maxUsers": 50,
+    "maxNewPerDay": 15,
+    "maxWaitlist": 500,
+    "maxChangesPerDay": 10,
+    "maxMessagesPerRun": 10
+  },
+  "pausedUsers": [
+    "uab7fee9cec"
+  ],
   "invites": [
     {
       "label": "default",
