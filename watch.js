@@ -106,7 +106,17 @@ const AIRLINE_HE = { LY: 'אל על', IZ: 'ארקיע', '6H': 'ישראייר' }
 const CITY_HE = { TLV: 'תל אביב', MIA: 'מיאמי', JFK: 'ניו יורק', EWR: 'ניו יורק', LAX: 'לוס אנג׳לס', LHR: 'לונדון', CDG: 'פריז',
   BKK: 'בנגקוק', FCO: 'רומא', ATH: 'אתונה', BCN: 'ברצלונה', MAD: 'מדריד', BER: 'ברלין', AMS: 'אמסטרדם', DXB: 'דובאי', BUD: 'בודפשט',
   PRG: 'פראג', VIE: 'וינה', LCA: 'לרנקה', IST: 'איסטנבול', SFO: 'סן פרנסיסקו', ORD: 'שיקגו', YYZ: 'טורונטו', NRT: 'טוקיו', HND: 'טוקיו' };
-codec.setPlaces(JSON.parse(fs.readFileSync(path.join(__dirname, 'docs', 'airports.json'), 'utf8')));
+const AIRPORT_ROWS = JSON.parse(fs.readFileSync(path.join(__dirname, 'docs', 'airports.json'), 'utf8'));
+codec.setPlaces(AIRPORT_ROWS);
+// Home market of a search: the US for flights from a US airport, otherwise Israel (the two markets the bot serves).
+// It picks the Google Flights country, the Kayak sites linked in the summary, and the Aviasales market.
+const AIRPORT_COUNTRY = Object.fromEntries(AIRPORT_ROWS.map((r) => [r[0], r[3]]));
+const homeCountry = () => (AIRPORT_COUNTRY[CONFIG.origin] === 'US' ? 'US' : 'IL');
+function forHome(list) {
+  const all = list || []; const c = homeCountry();
+  const mine = all.filter((x) => (x.country || 'IL') === c);
+  return mine.length ? mine : all.filter((x) => (x.country || 'IL') === 'IL');
+}
 const cityHe = (c) => CITY_HE[c] || codec.placeName(c);
 const outAirlineHe = () => (OUT.airline ? AIRLINE_HE[OUT.airline] || OUT.airline : '');
 function heAirline(name) {
@@ -621,7 +631,7 @@ const monthsIn = (from, to) => [...new Set(dateRange(from, to).map((d) => d.slic
 async function tpCall(params) {
   const token = (process.env.TRAVELPAYOUTS_TOKEN || '').trim();
   const u = new URL('https://api.travelpayouts.com/aviasales/v3/prices_for_dates');
-  for (const [k, v] of Object.entries({ ...params, currency: 'usd', sorting: 'price', limit: 1000 })) u.searchParams.set(k, String(v));
+  for (const [k, v] of Object.entries({ ...params, currency: 'usd', market: homeCountry().toLowerCase(), sorting: 'price', limit: 1000 })) u.searchParams.set(k, String(v));
   const res = await fetch(u, { headers: { 'x-access-token': token, accept: 'application/json' }, signal: AbortSignal.timeout(30000) });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const j = await res.json();
@@ -884,7 +894,7 @@ async function searchAll(browser, state, now, rates) {
   const tasks = CONFIG.kayak === false ? [] : kayakTasks(state.kayakTurn);
   if (tasks.length) console.log(`kayak tasks per market: ${tasks.length}`);
   const kayakJob = CONFIG.kayak === false ? Promise.resolve({ results: [], errors: [] }) : (async () => {
-    const jobs = CONFIG.markets.flatMap((m) => tasks.map((t) => ({ m, t })));
+    const jobs = forHome(CONFIG.markets).flatMap((m) => tasks.map((t) => ({ m, t })));
     const blockedHosts = KAYAK_BLOCKED; // after a block, the rest of that site's searches in this run are skipped
     const res = await pool(jobs, CONFIG.concurrency || 6, async ({ m, t }) => {
       if (blockedHosts.has(m.host)) { logSearch('kayak', m.host, t.kind, 'skipped', 0, 0, 0, 'site blocked earlier in this run'); return { results: [], errors: [] }; }
@@ -902,7 +912,7 @@ async function searchAll(browser, state, now, rates) {
   const googleJob = googleOn
     ? (async () => {
       const out = { results: [], errors: [] }; const gTasks = googleTasks(state.kayakTurn);
-      for (const gm of CONFIG.googleMarkets || []) { const r = await searchGoogle(browser, gm, gTasks); out.results.push(...r.results); out.errors.push(...r.errors); }
+      for (const gm of forHome(CONFIG.googleMarkets)) { const r = await searchGoogle(browser, gm, gTasks); out.results.push(...r.results); out.errors.push(...r.errors); }
       return out;
     })()
     : Promise.resolve({ results: [], errors: [] });
@@ -1188,7 +1198,7 @@ async function main() {
   // When Kayak gave nothing (it blocks automated searches from GitHub's servers), links to check it yourself.
   const kayakCount = offers.filter((o) => /kayak/i.test(o.url || '')).length;
   const kc = bestBag || best;
-  const kayakLinks = kayakCount ? '' : `🔎 לבדוק גם ב-Kayak בעצמך (±3 ימים): ${CONFIG.markets.map((m) => {
+  const kayakLinks = kayakCount ? '' : `🔎 לבדוק גם ב-Kayak בעצמך (±3 ימים): ${forHome(CONFIG.markets).map((m) => {
     const bag = m.bagFilter && CONFIG.checkedBags ? `bfc=${CONFIG.checkedBags}` : '';
     const kind = RET ? 'rt' : 'out';
     return `<a href="${kayakUrl(m.linkHost || m.host, kind, `${kc.out}-flexible-3days`, RET && kc.ret && `${kc.ret}-flexible-3days`, [kayakFs(kind), bag].filter(Boolean).join(';'))}">${m.label || m.host}</a>`;
@@ -1228,4 +1238,4 @@ if (require.main === module) {
     process.exit(1);
   });
 }
-module.exports = { googleBackoffUntil, tpOffer, kiwiQuery, canAlert, searchGoogle, useProfile, candidates, tripLegText, tripTotal, legShouldAlert, legSig, israelClock, preferredFirst, optionsText, flies, scrub, tracked, appendCsv, googleTfs, googleUrl, parseGoogleLabel, googleTasks, lowCostLinks, retryOnce, bagState, configFor, slotFrom, bagReq, bagOk, kayakUrlForTest: kayakUrl, pickDiverse, tripType, setIlsRate: (r) => { ILS_PER_USD = r; }, pairOk, legOkOut, legOkRet, parseKayakCards, candText, pickDistinct, searchCenters };
+module.exports = { homeCountry, forHome, googleBackoffUntil, tpOffer, kiwiQuery, canAlert, searchGoogle, useProfile, candidates, tripLegText, tripTotal, legShouldAlert, legSig, israelClock, preferredFirst, optionsText, flies, scrub, tracked, appendCsv, googleTfs, googleUrl, parseGoogleLabel, googleTasks, lowCostLinks, retryOnce, bagState, configFor, slotFrom, bagReq, bagOk, kayakUrlForTest: kayakUrl, pickDiverse, tripType, setIlsRate: (r) => { ILS_PER_USD = r; }, pairOk, legOkOut, legOkRet, parseKayakCards, candText, pickDistinct, searchCenters };

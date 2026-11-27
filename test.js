@@ -418,5 +418,12 @@ console.log('kayak filter test passed');
   const rt = W.tpOffer({ departure_at: '2030-12-20T10:35:00+02:00', return_at: '2031-01-12T22:00:00+02:00', transfers: 1, return_transfers: 0, duration_to: 300, duration_back: 200, airline: 'A3', price: 400, link: '/x' }, 'rt');
   assert.deepEqual(rt.legs.map((l) => l.date), ['2030-12-20', '2031-01-12']);
   assert.equal(W.tpOffer({ departure_at: '2030-12-20T10:35:00+02:00', price: 1 }, 'rt'), null, 'a round trip needs a return');
+  // Home market: US origins use the US Google, Kayak and Aviasales markets; everything else Israel's
+  W.useProfile({ origin: 'JFK', destination: 'CUN', outMaxStops: 1, outFrom: '2030-12-16', outTo: '2030-12-20', oneWay: true, maxPrice: 500 });
+  assert.equal(W.homeCountry(), 'US');
+  assert.deepEqual(W.forHome([{ gl: 'IL', country: 'IL' }, { gl: 'US', country: 'US' }]).map((m) => m.gl), ['US']);
+  W.useProfile({ origin: 'TLV', destination: 'ATH', outMaxStops: 1, outFrom: '2030-12-16', outTo: '2030-12-20', oneWay: true, maxPrice: 500 });
+  assert.equal(W.homeCountry(), 'IL');
+  assert.deepEqual(W.forHome([{ gl: 'IL' }, { gl: 'US', country: 'US' }]).map((m) => m.gl), ['IL'], 'no country = Israel');
   console.log('scaling tests passed');
 })().catch((e) => { console.error(e); process.exit(1); });

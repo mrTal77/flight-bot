@@ -18,12 +18,20 @@
       "currency": "ILS",
       "linkHost": "il.kayak.com",
       "label": "Kayak ישראל",
-      "bagFilter": true
+      "bagFilter": true,
+      "country": "IL"
     },
     {
       "host": "www.kayak.com.au",
       "currency": "AUD",
-      "label": "Kayak אוסטרליה"
+      "label": "Kayak אוסטרליה",
+      "country": "IL"
+    },
+    {
+      "host": "www.kayak.com",
+      "currency": "USD",
+      "label": "Kayak",
+      "country": "US"
     }
   ],
   "kiwi": true,
@@ -31,7 +39,13 @@
   "googleMarkets": [
     {
       "gl": "IL",
-      "label": "Google Flights ישראל"
+      "label": "Google Flights ישראל",
+      "country": "IL"
+    },
+    {
+      "gl": "US",
+      "label": "Google Flights",
+      "country": "US"
     }
   ],
   "duffelEveryHours": 8,

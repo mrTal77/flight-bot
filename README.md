@@ -49,6 +49,9 @@ Everything runs on free GitHub services: GitHub Actions (searches and the bot) a
 - **Google backoff**: after a Google block (any job; read from `logs/searches.csv`), nobody searches Google for
   `googleBackoffHours` (48).
 
+- **Home market**: a search from a US airport uses Google Flights US (`gl=US`), Kayak.com links and the Aviasales
+  US market; any other origin uses Israel's (`country` in `markets` / `googleMarkets`).
+
 ## Search log (debugging)
 
 - `logs/searches.csv`: one row per search that failed, was blocked, or worked only on the second try
